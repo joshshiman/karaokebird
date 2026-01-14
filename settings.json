@@ -1,5 +1,6 @@
 {
-    "highlight_color": "#ffff00",
+    "highlight_color": "#1DB954",
+    "stroke_color": "#000000",
     "normal_color": "#FFFFFF",
     "background_color": "rgba(0, 0, 0, 100)",
     "font_family": "Segoe UI",

@@ -9,12 +9,15 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFontComboBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
 )
+
+from ui_components import StrokedLabel
 
 SETTINGS_FILE = "settings.json"
 
@@ -73,6 +76,26 @@ class SettingsDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
 
         layout = QVBoxLayout()
+
+        # --- Preview Section ---
+        self.preview_frame = QFrame()
+        self.preview_frame.setStyleSheet(
+            f"background-color: {self.temp_settings.get('background_color', '#000000')}; border-radius: 8px;"
+        )
+        self.preview_frame.setMinimumHeight(120)
+
+        preview_layout = QVBoxLayout()
+        preview_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.preview_label = StrokedLabel("Live Preview Lyric")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        preview_layout.addWidget(self.preview_label)
+        self.preview_frame.setLayout(preview_layout)
+
+        layout.addWidget(QLabel("Preview:"))
+        layout.addWidget(self.preview_frame)
+        layout.addSpacing(10)
 
         form_layout = QFormLayout()
 
@@ -162,12 +185,30 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
 
         self.setLayout(layout)
+        self.update_preview()
+
+    def update_preview(self):
+        # Update preview label style based on temp_settings
+        font = QFont(
+            self.temp_settings["font_family"],
+            self.temp_settings["font_size_highlight"],
+            QFont.Weight.Bold,
+        )
+        self.preview_label.setFont(font)
+
+        text_color = self.temp_settings["highlight_color"]
+        stroke_color = self.temp_settings.get("stroke_color", "#000000")
+
+        self.preview_label.setStyleSheet(f"color: {text_color};")
+        self.preview_label.setStrokeColor(stroke_color)
 
     def update_setting(self, key, value):
         self.temp_settings[key] = value
+        self.update_preview()
 
     def update_font(self, font):
         self.temp_settings["font_family"] = font.family()
+        self.update_preview()
 
     def pick_color(self, key, button):
         color = QColorDialog.getColor(
@@ -177,6 +218,7 @@ class SettingsDialog(QDialog):
             hex_color = color.name()
             self.temp_settings[key] = hex_color
             button.setStyleSheet(f"background-color: {hex_color}")
+            self.update_preview()
 
     def reset_defaults(self):
         self.temp_settings = DEFAULT_SETTINGS.copy()
@@ -198,6 +240,7 @@ class SettingsDialog(QDialog):
 
         self.spin_lines.setValue(self.temp_settings["num_preview_lines"])
         self.spin_offset.setValue(self.temp_settings["window_y_offset"])
+        self.update_preview()
 
     def accept(self):
         self.manager.settings = self.temp_settings
