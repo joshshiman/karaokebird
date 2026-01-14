@@ -24,14 +24,14 @@ from ui_components import StrokedLabel
 SETTINGS_FILE = "settings.json"
 
 DEFAULT_SETTINGS = {
-    "highlight_color": "#1DB954",  # Spotify Green
+    "highlight_color": "#ffff00",
     "stroke_color": "#000000",
-    "normal_color": "#FFFFFF",
+    "normal_color": "#ababab",
     "background_color": "rgba(0, 0, 0, 100)",  # Semi-transparent black
-    "font_family": "Segoe UI",
+    "font_family": "Century Gothic",
     "font_size_highlight": 24,
     "font_size_normal": 14,
-    "window_y_offset": 250,  # From bottom
+    "window_y_offset": 281,
     "num_preview_lines": 1,
     "sync_offset_ms": 0,
 }
