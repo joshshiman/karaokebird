@@ -1,11 +1,12 @@
 {
-    "highlight_color": "#1DB954",
+    "highlight_color": "#ffff00",
     "stroke_color": "#000000",
-    "normal_color": "#FFFFFF",
+    "normal_color": "#ababab",
     "background_color": "rgba(0, 0, 0, 100)",
     "font_family": "Segoe UI",
     "font_size_highlight": 24,
     "font_size_normal": 14,
-    "window_y_offset": 250,
-    "num_preview_lines": 1
+    "window_y_offset": 973,
+    "num_preview_lines": 1,
+    "sync_offset_ms": 0
 }

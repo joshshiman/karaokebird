@@ -7,12 +7,14 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFontComboBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSlider,
     QSpinBox,
     QVBoxLayout,
 )
@@ -31,6 +33,7 @@ DEFAULT_SETTINGS = {
     "font_size_normal": 14,
     "window_y_offset": 250,  # From bottom
     "num_preview_lines": 1,
+    "sync_offset_ms": 0,
 }
 
 
@@ -82,15 +85,23 @@ class SettingsDialog(QDialog):
         self.preview_frame.setStyleSheet(
             f"background-color: {self.temp_settings.get('background_color', '#000000')}; border-radius: 8px;"
         )
-        self.preview_frame.setMinimumHeight(120)
+        self.preview_frame.setMinimumHeight(160)
 
         preview_layout = QVBoxLayout()
         preview_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        self.preview_prev = QLabel("Previous Context Line")
+        self.preview_prev.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_layout.addWidget(self.preview_prev)
+
         self.preview_label = StrokedLabel("Live Preview Lyric")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
         preview_layout.addWidget(self.preview_label)
+
+        self.preview_next = QLabel("Next Context Line")
+        self.preview_next.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_layout.addWidget(self.preview_next)
+
         self.preview_frame.setLayout(preview_layout)
 
         layout.addWidget(QLabel("Preview:"))
@@ -149,7 +160,7 @@ class SettingsDialog(QDialog):
         self.btn_color_norm.clicked.connect(
             lambda: self.pick_color("normal_color", self.btn_color_norm)
         )
-        form_layout.addRow("Normal Color:", self.btn_color_norm)
+        form_layout.addRow("Context Text Color:", self.btn_color_norm)
 
         # Layout / Position
         self.spin_lines = QSpinBox()
@@ -160,14 +171,42 @@ class SettingsDialog(QDialog):
         )
         form_layout.addRow("Context Lines:", self.spin_lines)
 
+        # Vertical Position (Slider + SpinBox)
+        self.pos_layout = QHBoxLayout()
+        self.slider_offset = QSlider(Qt.Orientation.Horizontal)
+        self.slider_offset.setRange(0, 1200)
+        self.slider_offset.setValue(self.temp_settings["window_y_offset"])
+        self.slider_offset.valueChanged.connect(
+            lambda v: self.update_setting("window_y_offset", v)
+        )
+
         self.spin_offset = QSpinBox()
-        self.spin_offset.setRange(0, 2000)
-        self.spin_offset.setSingleStep(10)
+        self.spin_offset.setRange(0, 1200)
         self.spin_offset.setValue(self.temp_settings["window_y_offset"])
         self.spin_offset.valueChanged.connect(
             lambda v: self.update_setting("window_y_offset", v)
         )
-        form_layout.addRow("Bottom Offset (px):", self.spin_offset)
+
+        # Sync slider and spinbox
+        self.slider_offset.valueChanged.connect(self.spin_offset.setValue)
+        self.spin_offset.valueChanged.connect(self.slider_offset.setValue)
+
+        self.pos_layout.addWidget(QLabel("Low"))
+        self.pos_layout.addWidget(self.slider_offset)
+        self.pos_layout.addWidget(QLabel("High"))
+        self.pos_layout.addWidget(self.spin_offset)
+
+        form_layout.addRow("Vertical Position:", self.pos_layout)
+
+        # Sync Offset
+        self.spin_sync = QDoubleSpinBox()
+        self.spin_sync.setRange(-10.0, 10.0)
+        self.spin_sync.setSingleStep(0.1)
+        self.spin_sync.setValue(self.temp_settings.get("sync_offset_ms", 0) / 1000.0)
+        self.spin_sync.valueChanged.connect(
+            lambda v: self.update_setting("sync_offset_ms", int(v * 1000))
+        )
+        form_layout.addRow("Sync Offset (sec):", self.spin_sync)
 
         layout.addLayout(form_layout)
 
@@ -188,7 +227,23 @@ class SettingsDialog(QDialog):
         self.update_preview()
 
     def update_preview(self):
-        # Update preview label style based on temp_settings
+        # --- Context Style ---
+        context_font = QFont(
+            self.temp_settings["font_family"],
+            self.temp_settings["font_size_normal"],
+        )
+        context_color = self.temp_settings["normal_color"]
+        show_context = self.temp_settings["num_preview_lines"] > 0
+
+        self.preview_prev.setFont(context_font)
+        self.preview_prev.setStyleSheet(f"color: {context_color};")
+        self.preview_prev.setVisible(show_context)
+
+        self.preview_next.setFont(context_font)
+        self.preview_next.setStyleSheet(f"color: {context_color};")
+        self.preview_next.setVisible(show_context)
+
+        # --- Highlight Style ---
         font = QFont(
             self.temp_settings["font_family"],
             self.temp_settings["font_size_highlight"],
@@ -239,7 +294,9 @@ class SettingsDialog(QDialog):
         )
 
         self.spin_lines.setValue(self.temp_settings["num_preview_lines"])
+        self.slider_offset.setValue(self.temp_settings["window_y_offset"])
         self.spin_offset.setValue(self.temp_settings["window_y_offset"])
+        self.spin_sync.setValue(self.temp_settings.get("sync_offset_ms", 0) / 1000.0)
         self.update_preview()
 
     def accept(self):

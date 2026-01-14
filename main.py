@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 import time
 
@@ -192,9 +193,12 @@ class OverlayWindow(QWidget):
         # Apply initial settings
         self.apply_settings()
 
-    def apply_settings(self):
+    def apply_settings(self, settings_override=None):
         # Update local settings ref
-        self.settings = self.settings_manager.settings
+        if settings_override:
+            self.settings = settings_override
+        else:
+            self.settings = self.settings_manager.settings
 
         # 1. Geometry / Position
         screen = QApplication.primaryScreen().geometry()
@@ -302,7 +306,11 @@ class OverlayWindow(QWidget):
             delta = now - self.last_sync_sys_time
             current_time += delta
 
+        # Apply sync offset
+        current_time += self.settings.get("sync_offset_ms", 0)
+
         # Find current line
+        # We look for the last line that has a start time <= current_time
         active_index = -1
         for i, line in enumerate(self.lyrics_data):
             if line["time"] <= current_time:
@@ -363,28 +371,55 @@ async def main_loop(reader):
 def create_tray_icon(app, window, settings_manager):
     tray = QSystemTrayIcon(app)
 
-    # Create a simple icon (Green Square)
-    pixmap = QPixmap(64, 64)
-    pixmap.fill(QColor("#1DB954"))
-    icon = QIcon(pixmap)
+    # Check for custom logo
+    if os.path.exists("KaraokeBirdLogo.png"):
+        icon = QIcon("KaraokeBirdLogo.png")
+    else:
+        # Fallback: Create a simple icon (Green Square)
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(QColor("#1DB954"))
+        icon = QIcon(pixmap)
+
     tray.setIcon(icon)
+    app.setWindowIcon(icon)
 
     menu = QMenu()
 
+    # Title Action
+    title_action = QAction("Karaoke Bird", app)
+    title_action.setEnabled(False)
+    menu.addAction(title_action)
+    menu.addSeparator()
+
     # Settings Action
-    action_settings = QAction("Settings", app)
+    action_settings = QAction("Settings...", app)
 
     def show_settings():
         dlg = SettingsDialog(settings_manager)
-        # When settings are accepted/changed, update the overlay
+
+        # Hook into the dialog's update_preview to trigger live updates on the main window
+        original_update_preview = dlg.update_preview
+
+        def live_update_proxy():
+            original_update_preview()
+            window.apply_settings(settings_override=dlg.temp_settings)
+
+        dlg.update_preview = live_update_proxy
+
+        # When settings are accepted/changed (Save), update the overlay permanently
         dlg.settings_changed.connect(lambda s: window.apply_settings())
-        dlg.exec()
+
+        if not dlg.exec():
+            # If Cancelled, revert to original settings
+            window.apply_settings()
 
     action_settings.triggered.connect(show_settings)
     menu.addAction(action_settings)
 
+    menu.addSeparator()
+
     # Exit Action
-    action_exit = QAction("Exit", app)
+    action_exit = QAction("Exit KaraokeBird", app)
     action_exit.triggered.connect(app.quit)
     menu.addAction(action_exit)
 
