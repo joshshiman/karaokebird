@@ -4,6 +4,7 @@ import os
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QColorDialog,
     QDialog,
     QDialogButtonBox,
@@ -26,14 +27,17 @@ SETTINGS_FILE = "settings.json"
 DEFAULT_SETTINGS = {
     "highlight_color": "#ffff00",
     "stroke_color": "#000000",
-    "normal_color": "#ababab",
+    "normal_color": "#ebebeb",
     "background_color": "rgba(0, 0, 0, 100)",  # Semi-transparent black
     "font_family": "Century Gothic",
     "font_size_highlight": 24,
     "font_size_normal": 14,
-    "window_y_offset": 281,
+    "window_y_offset": 300,
     "num_preview_lines": 1,
     "sync_offset_ms": 0,
+    "enable_animations": False,
+    "stroke_enabled_highlight": True,
+    "stroke_enabled_context": False,
 }
 
 
@@ -90,7 +94,7 @@ class SettingsDialog(QDialog):
         preview_layout = QVBoxLayout()
         preview_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.preview_prev = QLabel("Previous Context Line")
+        self.preview_prev = StrokedLabel("Previous Context Line")
         self.preview_prev.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_layout.addWidget(self.preview_prev)
 
@@ -98,7 +102,7 @@ class SettingsDialog(QDialog):
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_layout.addWidget(self.preview_label)
 
-        self.preview_next = QLabel("Next Context Line")
+        self.preview_next = StrokedLabel("Next Context Line")
         self.preview_next.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_layout.addWidget(self.preview_next)
 
@@ -144,6 +148,15 @@ class SettingsDialog(QDialog):
         )
         form_layout.addRow("Highlight Color:", self.btn_color_high)
 
+        self.check_stroke_high = QCheckBox()
+        self.check_stroke_high.setChecked(
+            self.temp_settings.get("stroke_enabled_highlight", True)
+        )
+        self.check_stroke_high.toggled.connect(
+            lambda v: self.update_setting("stroke_enabled_highlight", v)
+        )
+        form_layout.addRow("Highlight Stroke:", self.check_stroke_high)
+
         self.btn_color_stroke = QPushButton("Choose...")
         self.btn_color_stroke.setStyleSheet(
             f"background-color: {self.temp_settings.get('stroke_color', '#000000')}"
@@ -161,6 +174,15 @@ class SettingsDialog(QDialog):
             lambda: self.pick_color("normal_color", self.btn_color_norm)
         )
         form_layout.addRow("Context Text Color:", self.btn_color_norm)
+
+        self.check_stroke_context = QCheckBox()
+        self.check_stroke_context.setChecked(
+            self.temp_settings.get("stroke_enabled_context", True)
+        )
+        self.check_stroke_context.toggled.connect(
+            lambda v: self.update_setting("stroke_enabled_context", v)
+        )
+        form_layout.addRow("Context Stroke:", self.check_stroke_context)
 
         # Layout / Position
         self.spin_lines = QSpinBox()
@@ -208,6 +230,14 @@ class SettingsDialog(QDialog):
         )
         form_layout.addRow("Sync Offset (sec):", self.spin_sync)
 
+        # Animations
+        self.check_anim = QCheckBox()
+        self.check_anim.setChecked(self.temp_settings.get("enable_animations", True))
+        self.check_anim.toggled.connect(
+            lambda v: self.update_setting("enable_animations", v)
+        )
+        form_layout.addRow("Enable Animations:", self.check_anim)
+
         layout.addLayout(form_layout)
 
         # Buttons
@@ -233,14 +263,23 @@ class SettingsDialog(QDialog):
             self.temp_settings["font_size_normal"],
         )
         context_color = self.temp_settings["normal_color"]
+        stroke_color = self.temp_settings.get("stroke_color", "#000000")
         show_context = self.temp_settings["num_preview_lines"] > 0
 
         self.preview_prev.setFont(context_font)
         self.preview_prev.setStyleSheet(f"color: {context_color};")
+        self.preview_prev.setStrokeColor(stroke_color)
+        self.preview_prev.setStrokeEnabled(
+            self.temp_settings.get("stroke_enabled_context", True)
+        )
         self.preview_prev.setVisible(show_context)
 
         self.preview_next.setFont(context_font)
         self.preview_next.setStyleSheet(f"color: {context_color};")
+        self.preview_next.setStrokeColor(stroke_color)
+        self.preview_next.setStrokeEnabled(
+            self.temp_settings.get("stroke_enabled_context", True)
+        )
         self.preview_next.setVisible(show_context)
 
         # --- Highlight Style ---
@@ -252,10 +291,12 @@ class SettingsDialog(QDialog):
         self.preview_label.setFont(font)
 
         text_color = self.temp_settings["highlight_color"]
-        stroke_color = self.temp_settings.get("stroke_color", "#000000")
 
         self.preview_label.setStyleSheet(f"color: {text_color};")
         self.preview_label.setStrokeColor(stroke_color)
+        self.preview_label.setStrokeEnabled(
+            self.temp_settings.get("stroke_enabled_highlight", True)
+        )
 
     def update_setting(self, key, value):
         self.temp_settings[key] = value
@@ -283,6 +324,13 @@ class SettingsDialog(QDialog):
         self.spin_size_high.setValue(self.temp_settings["font_size_highlight"])
         self.spin_size_norm.setValue(self.temp_settings["font_size_normal"])
 
+        self.check_stroke_high.setChecked(
+            self.temp_settings["stroke_enabled_highlight"]
+        )
+        self.check_stroke_context.setChecked(
+            self.temp_settings["stroke_enabled_context"]
+        )
+
         self.btn_color_high.setStyleSheet(
             f"background-color: {self.temp_settings['highlight_color']}"
         )
@@ -297,6 +345,7 @@ class SettingsDialog(QDialog):
         self.slider_offset.setValue(self.temp_settings["window_y_offset"])
         self.spin_offset.setValue(self.temp_settings["window_y_offset"])
         self.spin_sync.setValue(self.temp_settings.get("sync_offset_ms", 0) / 1000.0)
+        self.check_anim.setChecked(self.temp_settings.get("enable_animations", True))
         self.update_preview()
 
     def accept(self):
