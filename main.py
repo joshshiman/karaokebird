@@ -289,9 +289,28 @@ class OverlayWindow(QWidget):
             self.curr_label.setText("Lyrics loaded!")
 
     def on_playback_sync(self, is_playing, position, duration):
+        now = time.time() * 1000
+
+        if self.is_playing and is_playing:
+            # Interpolated time right now
+            expected = self.last_sync_track_time + (now - self.last_sync_sys_time)
+            diff = position - expected
+
+            # STRICT MONOTONIC SYNC:
+            # 1. Large Jump (abs(diff) > 2000ms): Assume Seek/Skip. Snap instantly.
+            # 2. Forward Drift (diff > 0): We are lagging behind Windows. Catch up.
+            # 3. Backward Drift (diff < 0): Windows sent stale time. IGNORE update.
+
+            if abs(diff) > 2000 or diff > 0:
+                self.last_sync_track_time = position
+                self.last_sync_sys_time = now
+            # else: diff < 0 (Stale poll). Do nothing, keep extrapolating from old anchor.
+        else:
+            # Not playing or just starting -> Snap to reported position
+            self.last_sync_track_time = position
+            self.last_sync_sys_time = now
+
         self.is_playing = is_playing
-        self.last_sync_track_time = position
-        self.last_sync_sys_time = time.time() * 1000
         self.duration = duration
         self.update_frame()
 
