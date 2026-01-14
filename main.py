@@ -178,6 +178,8 @@ class OverlayWindow(QWidget):
         # Internal State
         self.lyrics_data = []
         self.current_lyric_index = -1
+        self.current_title = ""
+        self.current_artist = ""
 
         # Playback state for interpolation
         self.is_playing = False
@@ -270,11 +272,23 @@ class OverlayWindow(QWidget):
                 "Waiting for music..." if not self.lyrics_data else "Lyrics loaded!"
             )
 
+    def set_track_info(self, title, artist):
+        self.current_title = title
+        self.current_artist = artist
+        # Reset lyrics so we show searching status
+        self.lyrics_data = []
+        self.update_status(f"Searching: {title} - {artist}")
+
     def update_status(self, msg):
         # Since we removed the status label to clean up the look, we might just print to console
         # or temporarily show it on the current line if no lyrics are loaded
         if not self.lyrics_data:
             self.curr_label.setText(msg)
+            # Clear context lines when showing status
+            for l in self.prev_labels:
+                l.setText("")
+            for l in self.next_labels:
+                l.setText("")
 
     def on_lyrics_found(self, data):
         self.lyrics_data = data
@@ -286,7 +300,8 @@ class OverlayWindow(QWidget):
             for l in self.next_labels:
                 l.setText("")
         else:
-            self.curr_label.setText("Lyrics loaded!")
+            # Force an update to show Title/Lyrics loaded immediately
+            self.update_display(-1)
 
     def on_playback_sync(self, is_playing, position, duration):
         now = time.time() * 1000
@@ -341,14 +356,23 @@ class OverlayWindow(QWidget):
             self.current_lyric_index = active_index
             self.update_display(active_index)
 
+    def get_line_text(self, index):
+        if 0 <= index < len(self.lyrics_data):
+            return self.lyrics_data[index]["text"]
+        elif index == -1:
+            return f"Now Playing: {self.current_title}"
+        elif index == -2:
+            return "Lyrics loaded!"
+        elif index < -2:
+            return ""
+        else:
+            return ""
+
     def update_display(self, index):
         # index is the index of the CURRENT line in self.lyrics_data
 
         # 1. Update Current
-        if 0 <= index < len(self.lyrics_data):
-            self.curr_label.setText(self.lyrics_data[index]["text"])
-        else:
-            self.curr_label.setText("..." if index < 0 else "")
+        self.curr_label.setText(self.get_line_text(index))
 
         # 2. Update Previous Labels
         # self.prev_labels[0] is the top-most (furthest back).
@@ -359,22 +383,14 @@ class OverlayWindow(QWidget):
             # i=1 (bottom) -> if num_prev=2 -> offset = -1
             offset = i - num_prev
             target_idx = index + offset
-
-            if 0 <= target_idx < len(self.lyrics_data):
-                lbl.setText(self.lyrics_data[target_idx]["text"])
-            else:
-                lbl.setText("")
+            lbl.setText(self.get_line_text(target_idx))
 
         # 3. Update Next Labels
         # self.next_labels[0] is right below current.
         for i, lbl in enumerate(self.next_labels):
             offset = i + 1
             target_idx = index + offset
-
-            if 0 <= target_idx < len(self.lyrics_data):
-                lbl.setText(self.lyrics_data[target_idx]["text"])
-            else:
-                lbl.setText("")
+            lbl.setText(self.get_line_text(target_idx))
 
 
 # --- Main Entry ---
@@ -466,9 +482,7 @@ def main():
 
     # Connect signals
     reader.status_message.connect(window.update_status)
-    reader.track_changed.connect(
-        lambda t, a: window.update_status(f"Searching: {t} - {a}")
-    )
+    reader.track_changed.connect(window.set_track_info)
     reader.lyrics_found.connect(window.on_lyrics_found)
     reader.playback_sync.connect(window.on_playback_sync)
 
