@@ -6,8 +6,27 @@ import qasync
 import syncedlyrics
 import winsdk.windows.media.control as wmc
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QGraphicsDropShadowEffect,
+    QLabel,
+    QMenu,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
+)
+
+from settings_ui import SettingsDialog, SettingsManager
 
 # --- Backend Logic ---
 
@@ -127,9 +146,49 @@ class SpotifyReader(QObject):
 # --- Frontend GUI ---
 
 
+class StrokedLabel(QLabel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.stroke_color = QColor("#000000")
+        self.stroke_width = 3
+
+    def setStrokeColor(self, color):
+        self.stroke_color = QColor(color)
+
+    def paintEvent(self, event):
+        if not self.text():
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        metrics = self.fontMetrics()
+        # Calculate centered position (assuming AlignCenter)
+        x = (self.width() - metrics.horizontalAdvance(self.text())) / 2
+        y = (self.height() + metrics.ascent() - metrics.descent()) / 2
+
+        path = QPainterPath()
+        path.addText(x, y, self.font(), self.text())
+
+        # Draw Stroke
+        pen = QPen(self.stroke_color)
+        pen.setWidth(self.stroke_width)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        # Draw Fill
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self.palette().text())
+        painter.drawPath(path)
+
+
 class OverlayWindow(QWidget):
-    def __init__(self):
+    def __init__(self, settings_manager):
         super().__init__()
+        self.settings_manager = settings_manager
+        self.settings = self.settings_manager.settings
 
         # Window Setup
         self.setWindowFlags(
@@ -140,48 +199,19 @@ class OverlayWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        # Geometry
-        screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(screen.width() // 2 - 600, screen.height() - 250, 1200, 200)
+        # Layout container
+        self.main_layout = QVBoxLayout()
+        self.main_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setLayout(self.main_layout)
 
-        # Layout
-        layout = QVBoxLayout()
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Widget placeholders
+        self.prev_labels = []
+        self.next_labels = []
+        self.curr_label = StrokedLabel("Waiting for music...")
+        self.curr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.curr_label.setWordWrap(False)
 
-        # Styling
-        self.setStyleSheet("QLabel { color: white; }")
-
-        # Widgets
-        self.status_label = QLabel("KaraokeBird Starting...")
-        self.status_label.setStyleSheet(
-            "font-size: 12px; color: #AAAAAA; background-color: rgba(0,0,0,100); padding: 4px; border-radius: 4px;"
-        )
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.prev_line = QLabel("")
-        self.prev_line.setFont(QFont("Segoe UI", 14))
-        self.prev_line.setStyleSheet("color: rgba(255, 255, 255, 0.6);")
-        self.prev_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.curr_line = QLabel("Waiting for music...")
-        self.curr_line.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
-        self.curr_line.setStyleSheet(
-            "color: #1DB954; text-shadow: 2px 2px 4px #000000;"
-        )  # Spotify Green
-        self.curr_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.curr_line.setWordWrap(False)
-
-        self.next_line = QLabel("")
-        self.next_line.setFont(QFont("Segoe UI", 14))
-        self.next_line.setStyleSheet("color: rgba(255, 255, 255, 0.6);")
-        self.next_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.prev_line)
-        layout.addWidget(self.curr_line)
-        layout.addWidget(self.next_line)
-        self.setLayout(layout)
-
+        # Internal State
         self.lyrics_data = []
         self.current_lyric_index = -1
 
@@ -196,27 +226,106 @@ class OverlayWindow(QWidget):
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(50)  # Update every 50ms (20fps)
 
+        # Apply initial settings
+        self.apply_settings()
+
+    def apply_settings(self):
+        # Update local settings ref
+        self.settings = self.settings_manager.settings
+
+        # 1. Geometry / Position
+        screen = QApplication.primaryScreen().geometry()
+        width = 1200
+        height = 400
+        # Position from bottom based on offset
+        y_pos = screen.height() - self.settings["window_y_offset"] - (height // 2)
+        # Ensure it doesn't go off screen bottom if offset is small
+        if y_pos > screen.height() - height:
+            y_pos = screen.height() - height
+
+        self.setGeometry(screen.width() // 2 - (width // 2), y_pos, width, height)
+
+        # 2. Rebuild Labels
+        # Clear existing widgets from layout
+        while self.main_layout.count():
+            child = self.main_layout.takeAt(0)
+            if child.widget():
+                if child.widget() == self.curr_label:
+                    child.widget().setParent(None)  # Detach, don't delete
+                else:
+                    child.widget().deleteLater()
+
+        self.prev_labels = []
+        self.next_labels = []
+
+        num_lines = self.settings["num_preview_lines"]
+        font_family = self.settings["font_family"]
+
+        # --- Previous Lines ---
+        for _ in range(num_lines):
+            l = QLabel("")
+            l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            l.setFont(QFont(font_family, self.settings["font_size_normal"]))
+            l.setStyleSheet(f"color: {self.settings['normal_color']};")
+            self.prev_labels.append(l)
+            self.main_layout.addWidget(l)
+
+        # --- Current Line ---
+        self.curr_label.setFont(
+            QFont(font_family, self.settings["font_size_highlight"], QFont.Weight.Bold)
+        )
+        self.curr_label.setStyleSheet(f"color: {self.settings['highlight_color']};")
+        self.curr_label.setStrokeColor(self.settings.get("stroke_color", "#000000"))
+
+        # Shadow effect
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(10)
+        shadow.setColor(QColor(0, 0, 0, 200))
+        shadow.setOffset(2, 2)
+        self.curr_label.setGraphicsEffect(shadow)
+
+        self.main_layout.addWidget(self.curr_label)
+
+        # --- Next Lines ---
+        for _ in range(num_lines):
+            l = QLabel("")
+            l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            l.setFont(QFont(font_family, self.settings["font_size_normal"]))
+            l.setStyleSheet(f"color: {self.settings['normal_color']};")
+            self.next_labels.append(l)
+            self.main_layout.addWidget(l)
+
+        # Force refresh of text content
+        if self.current_lyric_index != -1:
+            self.update_display(self.current_lyric_index)
+        elif not self.lyrics_data:
+            self.curr_label.setText(
+                "Waiting for music..." if not self.lyrics_data else "Lyrics loaded!"
+            )
+
     def update_status(self, msg):
-        self.status_label.setText(msg)
-        self.status_label.adjustSize()
+        # Since we removed the status label to clean up the look, we might just print to console
+        # or temporarily show it on the current line if no lyrics are loaded
+        if not self.lyrics_data:
+            self.curr_label.setText(msg)
 
     def on_lyrics_found(self, data):
         self.lyrics_data = data
         self.current_lyric_index = -1
         if not data:
-            self.curr_line.setText("No synced lyrics found")
-            self.prev_line.setText("")
-            self.next_line.setText("")
+            self.curr_label.setText("No synced lyrics found")
+            for l in self.prev_labels:
+                l.setText("")
+            for l in self.next_labels:
+                l.setText("")
         else:
-            self.curr_line.setText("Lyrics loaded!")
+            self.curr_label.setText("Lyrics loaded!")
 
     def on_playback_sync(self, is_playing, position, duration):
         self.is_playing = is_playing
         self.last_sync_track_time = position
         self.last_sync_sys_time = time.time() * 1000
         self.duration = duration
-
-        # Immediate update on sync
         self.update_frame()
 
     def update_frame(self):
@@ -231,7 +340,6 @@ class OverlayWindow(QWidget):
             current_time += delta
 
         # Find current line
-        # We look for the last line that has a start time <= current_time
         active_index = -1
         for i, line in enumerate(self.lyrics_data):
             if line["time"] <= current_time:
@@ -244,25 +352,39 @@ class OverlayWindow(QWidget):
             self.update_display(active_index)
 
     def update_display(self, index):
-        if index < 0:
-            self.prev_line.setText("")
-            self.curr_line.setText("...")  # Intro
-            self.next_line.setText(
-                self.lyrics_data[0]["text"] if self.lyrics_data else ""
-            )
-            return
+        # index is the index of the CURRENT line in self.lyrics_data
 
-        prev_text = self.lyrics_data[index - 1]["text"] if index > 0 else ""
-        curr_text = self.lyrics_data[index]["text"]
-        next_text = (
-            self.lyrics_data[index + 1]["text"]
-            if index < len(self.lyrics_data) - 1
-            else ""
-        )
+        # 1. Update Current
+        if 0 <= index < len(self.lyrics_data):
+            self.curr_label.setText(self.lyrics_data[index]["text"])
+        else:
+            self.curr_label.setText("..." if index < 0 else "")
 
-        self.prev_line.setText(prev_text)
-        self.curr_line.setText(curr_text)
-        self.next_line.setText(next_text)
+        # 2. Update Previous Labels
+        # self.prev_labels[0] is the top-most (furthest back).
+        # self.prev_labels[-1] is right above current.
+        num_prev = len(self.prev_labels)
+        for i, lbl in enumerate(self.prev_labels):
+            # i=0 (top) -> if num_prev=2 -> offset = -2
+            # i=1 (bottom) -> if num_prev=2 -> offset = -1
+            offset = i - num_prev
+            target_idx = index + offset
+
+            if 0 <= target_idx < len(self.lyrics_data):
+                lbl.setText(self.lyrics_data[target_idx]["text"])
+            else:
+                lbl.setText("")
+
+        # 3. Update Next Labels
+        # self.next_labels[0] is right below current.
+        for i, lbl in enumerate(self.next_labels):
+            offset = i + 1
+            target_idx = index + offset
+
+            if 0 <= target_idx < len(self.lyrics_data):
+                lbl.setText(self.lyrics_data[target_idx]["text"])
+            else:
+                lbl.setText("")
 
 
 # --- Main Entry ---
@@ -275,13 +397,53 @@ async def main_loop(reader):
         await asyncio.sleep(0.5)  # Poll frequency
 
 
+def create_tray_icon(app, window, settings_manager):
+    tray = QSystemTrayIcon(app)
+
+    # Create a simple icon (Green Square)
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(QColor("#1DB954"))
+    icon = QIcon(pixmap)
+    tray.setIcon(icon)
+
+    menu = QMenu()
+
+    # Settings Action
+    action_settings = QAction("Settings", app)
+
+    def show_settings():
+        dlg = SettingsDialog(settings_manager)
+        # When settings are accepted/changed, update the overlay
+        dlg.settings_changed.connect(lambda s: window.apply_settings())
+        dlg.exec()
+
+    action_settings.triggered.connect(show_settings)
+    menu.addAction(action_settings)
+
+    # Exit Action
+    action_exit = QAction("Exit", app)
+    action_exit.triggered.connect(app.quit)
+    menu.addAction(action_exit)
+
+    tray.setContextMenu(menu)
+    tray.show()
+    return tray
+
+
 def main():
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)  # Keep running for tray
+
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    window = OverlayWindow()
+    settings_manager = SettingsManager()
+
+    window = OverlayWindow(settings_manager)
     window.show()
+
+    # Create tray icon
+    tray = create_tray_icon(app, window, settings_manager)
 
     reader = SpotifyReader()
 
