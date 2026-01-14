@@ -413,12 +413,24 @@ async def main_loop(reader):
         await asyncio.sleep(0.5)  # Poll frequency
 
 
+def resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+
 def create_tray_icon(app, window, settings_manager):
     tray = QSystemTrayIcon(app)
 
     # Check for custom logo
-    if os.path.exists("KaraokeBirdLogo.png"):
-        icon = QIcon("KaraokeBirdLogo.png")
+    logo_path = resource_path("KaraokeBirdLogo.png")
+    if os.path.exists(logo_path):
+        icon = QIcon(logo_path)
     else:
         # Fallback: Create a simple icon (Green Square)
         pixmap = QPixmap(64, 64)
