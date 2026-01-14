@@ -134,7 +134,7 @@ class OverlayWindow(QWidget):
 
         # Geometry
         screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(screen.width() // 2 - 400, screen.height() - 200, 800, 150)
+        self.setGeometry(screen.width() // 2 - 600, screen.height() - 250, 1200, 200)
 
         # Layout
         layout = QVBoxLayout()
@@ -161,7 +161,7 @@ class OverlayWindow(QWidget):
             "color: #1DB954; text-shadow: 2px 2px 4px #000000;"
         )  # Spotify Green
         self.curr_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.curr_line.setWordWrap(True)
+        self.curr_line.setWordWrap(False)
 
         self.next_line = QLabel("")
         self.next_line.setFont(QFont("Segoe UI", 14))
