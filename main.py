@@ -1,10 +1,11 @@
 import asyncio
 import sys
+import time
 
 import qasync
 import syncedlyrics
 import winsdk.windows.media.control as wmc
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
@@ -14,7 +15,8 @@ from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 class SpotifyReader(QObject):
     # Signals to update UI from async loop
     track_changed = pyqtSignal(str, str)  # title, artist
-    progress_updated = pyqtSignal(int, int)  # current_ms, duration_ms
+    # is_playing, current_ms, duration_ms
+    playback_sync = pyqtSignal(bool, int, int)
     lyrics_found = pyqtSignal(list)  # list of (time_ms, text)
     status_message = pyqtSignal(str)
 
@@ -41,12 +43,18 @@ class SpotifyReader(QObject):
             self.status_message.emit("Waiting for media...")
             return
 
-        # Get Timeline (Progress)
+        # Get Timeline & Playback Status
         timeline = self.current_session.get_timeline_properties()
-        if timeline:
+        playback_info = self.current_session.get_playback_info()
+
+        if timeline and playback_info:
             position = timeline.position.total_seconds() * 1000
             duration = timeline.end_time.total_seconds() * 1000
-            self.progress_updated.emit(int(position), int(duration))
+            is_playing = (
+                playback_info.playback_status
+                == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
+            )
+            self.playback_sync.emit(is_playing, int(position), int(duration))
 
         # Get Metadata (Title/Artist)
         try:
@@ -177,6 +185,17 @@ class OverlayWindow(QWidget):
         self.lyrics_data = []
         self.current_lyric_index = -1
 
+        # Playback state for interpolation
+        self.is_playing = False
+        self.last_sync_track_time = 0
+        self.last_sync_sys_time = 0
+        self.duration = 0
+
+        # High-frequency timer for smooth updates
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_frame)
+        self.timer.start(50)  # Update every 50ms (20fps)
+
     def update_status(self, msg):
         self.status_label.setText(msg)
         self.status_label.adjustSize()
@@ -191,15 +210,31 @@ class OverlayWindow(QWidget):
         else:
             self.curr_line.setText("Lyrics loaded!")
 
-    def on_progress(self, current_ms, duration_ms):
+    def on_playback_sync(self, is_playing, position, duration):
+        self.is_playing = is_playing
+        self.last_sync_track_time = position
+        self.last_sync_sys_time = time.time() * 1000
+        self.duration = duration
+
+        # Immediate update on sync
+        self.update_frame()
+
+    def update_frame(self):
         if not self.lyrics_data:
             return
 
+        # Calculate interpolated time
+        current_time = self.last_sync_track_time
+        if self.is_playing:
+            now = time.time() * 1000
+            delta = now - self.last_sync_sys_time
+            current_time += delta
+
         # Find current line
-        # We look for the last line that has a start time <= current_ms
+        # We look for the last line that has a start time <= current_time
         active_index = -1
         for i, line in enumerate(self.lyrics_data):
-            if line["time"] <= current_ms:
+            if line["time"] <= current_time:
                 active_index = i
             else:
                 break
@@ -256,7 +291,7 @@ def main():
         lambda t, a: window.update_status(f"Searching: {t} - {a}")
     )
     reader.lyrics_found.connect(window.on_lyrics_found)
-    reader.progress_updated.connect(window.on_progress)
+    reader.playback_sync.connect(window.on_playback_sync)
 
     with loop:
         loop.create_task(main_loop(reader))
