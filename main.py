@@ -268,16 +268,25 @@ class OverlayWindow(QWidget):
             self.settings = self.settings_manager.settings
 
         # 1. Geometry / Position
-        screen = QApplication.primaryScreen().geometry()
+        # Use availableGeometry to respect taskbar and multi-monitor setups
+        screen = QApplication.primaryScreen().availableGeometry()
         width = 1200
         height = 400
-        # Position from bottom based on offset
-        y_pos = screen.height() - self.settings["window_y_offset"] - (height // 2)
-        # Ensure it doesn't go off screen bottom if offset is small
-        if y_pos > screen.height() - height:
-            y_pos = screen.height() - height
 
-        self.setGeometry(screen.width() // 2 - (width // 2), y_pos, width, height)
+        # offset 0 is now exactly the bottom of the available screen area.
+        # max_y is the top-most y coordinate where the window sits at the bottom.
+        max_y = screen.y() + screen.height() - height
+        min_y = screen.y()
+
+        y_pos = max_y - self.settings.get("window_y_offset", 0)
+
+        # Clamp to screen bounds to prevent "unleashed" behavior (going off top)
+        # and to fix the bottom bound not being responsive at low offsets.
+        y_pos = max(min_y, min(y_pos, max_y))
+
+        self.setGeometry(
+            screen.x() + (screen.width() // 2) - (width // 2), y_pos, width, height
+        )
 
         # 2. Rebuild Labels
         # Clear existing widgets from layout

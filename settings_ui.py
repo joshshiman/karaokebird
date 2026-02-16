@@ -4,6 +4,7 @@ import os
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QKeySequence
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QColorDialog,
     QDialog,
@@ -36,8 +37,8 @@ DEFAULT_SETTINGS = {
     "font_family": "Century Gothic",
     "font_size_highlight": 24,
     "font_size_normal": 14,
-    "window_y_offset": 300,
-    "num_history_lines": 1,
+    "window_y_offset": 0,
+    "num_history_lines": 0,
     "num_future_lines": 1,
     "sync_offset_ms": 0,
     "enable_animations": False,
@@ -229,16 +230,20 @@ class SettingsDialog(QDialog):
         pos_group = QGroupBox("Screen Position")
         pos_layout = QVBoxLayout()
 
+        # Get screen height to bound the slider dynamically
+        screen = QApplication.primaryScreen().availableGeometry()
+        max_height = screen.height()
+
         h_layout = QHBoxLayout()
         self.slider_offset = QSlider(Qt.Orientation.Horizontal)
-        self.slider_offset.setRange(0, 1200)
+        self.slider_offset.setRange(0, max_height)
         self.slider_offset.setValue(self.temp_settings["window_y_offset"])
         self.slider_offset.valueChanged.connect(
             lambda v: self.update_setting("window_y_offset", v)
         )
 
         self.spin_offset = QSpinBox()
-        self.spin_offset.setRange(0, 1200)
+        self.spin_offset.setRange(0, max_height)
         self.spin_offset.setValue(self.temp_settings["window_y_offset"])
         self.spin_offset.valueChanged.connect(
             lambda v: self.update_setting("window_y_offset", v)
@@ -247,9 +252,9 @@ class SettingsDialog(QDialog):
         self.slider_offset.valueChanged.connect(self.spin_offset.setValue)
         self.spin_offset.valueChanged.connect(self.slider_offset.setValue)
 
-        h_layout.addWidget(QLabel("Bottom"))
+        h_layout.addWidget(QLabel("Screen Bottom"))
         h_layout.addWidget(self.slider_offset)
-        h_layout.addWidget(QLabel("Top"))
+        h_layout.addWidget(QLabel("Screen Top"))
         h_layout.addWidget(self.spin_offset)
 
         pos_layout.addLayout(h_layout)
