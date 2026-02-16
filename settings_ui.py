@@ -12,13 +12,16 @@ from PyQt6.QtWidgets import (
     QFontComboBox,
     QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QKeySequenceEdit,
     QLabel,
     QPushButton,
     QSlider,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from ui_components import StrokedLabel
@@ -29,12 +32,14 @@ DEFAULT_SETTINGS = {
     "highlight_color": "#ffff00",
     "stroke_color": "#000000",
     "normal_color": "#ebebeb",
-    "background_color": "rgba(0, 0, 0, 100)",  # Semi-transparent black
+    "background_color": "rgba(0, 0, 0, 100)",
     "font_family": "Century Gothic",
     "font_size_highlight": 24,
     "font_size_normal": 14,
     "window_y_offset": 300,
     "num_preview_lines": 1,
+    "show_history": True,
+    "show_future": True,
     "sync_offset_ms": 0,
     "enable_animations": False,
     "stroke_enabled_highlight": True,
@@ -79,124 +84,153 @@ class SettingsDialog(QDialog):
         self.manager = settings_manager
         self.temp_settings = self.manager.settings.copy()
         self.setWindowTitle("KaraokeBird Settings")
-        self.setFixedWidth(400)
+        self.setFixedWidth(450)
 
-        # Keep window on top so it's not lost behind the overlay
+        # Keep window on top
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
 
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
 
-        # --- Preview Section ---
+        # --- Preview Section (Always Visible) ---
         self.preview_frame = QFrame()
         self.preview_frame.setStyleSheet(
             f"background-color: {self.temp_settings.get('background_color', '#000000')}; border-radius: 8px;"
         )
-        self.preview_frame.setMinimumHeight(160)
+        self.preview_frame.setMinimumHeight(140)
 
         preview_layout = QVBoxLayout()
         preview_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.preview_prev = StrokedLabel("Previous Context Line")
+        self.preview_prev = StrokedLabel("Previous Lyric Line")
         self.preview_prev.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_layout.addWidget(self.preview_prev)
 
-        self.preview_label = StrokedLabel("Live Preview Lyric")
+        self.preview_label = StrokedLabel("Current Active Lyric")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_layout.addWidget(self.preview_label)
 
-        self.preview_next = StrokedLabel("Next Context Line")
+        self.preview_next = StrokedLabel("Upcoming Lyric Line")
         self.preview_next.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_layout.addWidget(self.preview_next)
 
         self.preview_frame.setLayout(preview_layout)
+        main_layout.addWidget(QLabel("<b>Live Preview:</b>"))
+        main_layout.addWidget(self.preview_frame)
+        main_layout.addSpacing(10)
 
-        layout.addWidget(QLabel("Preview:"))
-        layout.addWidget(self.preview_frame)
-        layout.addSpacing(10)
+        # --- Tabbed Categories ---
+        self.tabs = QTabWidget()
 
-        form_layout = QFormLayout()
+        self.tabs.addTab(self.create_appearance_tab(), "Appearance")
+        self.tabs.addTab(self.create_layout_tab(), "Layout")
+        self.tabs.addTab(self.create_system_tab(), "System")
 
-        # Font
+        main_layout.addWidget(self.tabs)
+
+        # --- Buttons ---
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.RestoreDefaults
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
+            self.reset_defaults
+        )
+        main_layout.addWidget(buttons)
+
+        self.setLayout(main_layout)
+        self.update_preview()
+
+    def create_appearance_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        # Text Style Group
+        font_group = QGroupBox("Typography")
+        font_layout = QFormLayout()
+
         self.font_combo = QFontComboBox()
         self.font_combo.setCurrentFont(QFont(self.temp_settings["font_family"]))
         self.font_combo.currentFontChanged.connect(self.update_font)
-        form_layout.addRow("Font Family:", self.font_combo)
+        font_layout.addRow("Font Family:", self.font_combo)
 
-        # Highlight Font Size
         self.spin_size_high = QSpinBox()
         self.spin_size_high.setRange(8, 72)
         self.spin_size_high.setValue(self.temp_settings["font_size_highlight"])
         self.spin_size_high.valueChanged.connect(
             lambda v: self.update_setting("font_size_highlight", v)
         )
-        form_layout.addRow("Highlight Size:", self.spin_size_high)
+        font_layout.addRow("Highlight Size:", self.spin_size_high)
 
-        # Normal Font Size
         self.spin_size_norm = QSpinBox()
         self.spin_size_norm.setRange(8, 72)
         self.spin_size_norm.setValue(self.temp_settings["font_size_normal"])
         self.spin_size_norm.valueChanged.connect(
             lambda v: self.update_setting("font_size_normal", v)
         )
-        form_layout.addRow("Normal Size:", self.spin_size_norm)
+        font_layout.addRow("Context Size:", self.spin_size_norm)
 
-        # Colors
+        font_group.setLayout(font_layout)
+        layout.addWidget(font_group)
+
+        # Colors & Effects Group
+        color_group = QGroupBox("Colors & Visuals")
+        color_layout = QFormLayout()
+
         self.btn_color_high = QPushButton("Choose...")
+        self.btn_color_high.setFixedWidth(100)
         self.btn_color_high.setStyleSheet(
             f"background-color: {self.temp_settings['highlight_color']}"
         )
         self.btn_color_high.clicked.connect(
             lambda: self.pick_color("highlight_color", self.btn_color_high)
         )
-        form_layout.addRow("Highlight Color:", self.btn_color_high)
-
-        self.check_stroke_high = QCheckBox()
-        self.check_stroke_high.setChecked(
-            self.temp_settings.get("stroke_enabled_highlight", True)
-        )
-        self.check_stroke_high.toggled.connect(
-            lambda v: self.update_setting("stroke_enabled_highlight", v)
-        )
-        form_layout.addRow("Highlight Stroke:", self.check_stroke_high)
-
-        self.btn_color_stroke = QPushButton("Choose...")
-        self.btn_color_stroke.setStyleSheet(
-            f"background-color: {self.temp_settings.get('stroke_color', '#000000')}"
-        )
-        self.btn_color_stroke.clicked.connect(
-            lambda: self.pick_color("stroke_color", self.btn_color_stroke)
-        )
-        form_layout.addRow("Stroke Color:", self.btn_color_stroke)
+        color_layout.addRow("Highlight Color:", self.btn_color_high)
 
         self.btn_color_norm = QPushButton("Choose...")
+        self.btn_color_norm.setFixedWidth(100)
         self.btn_color_norm.setStyleSheet(
             f"background-color: {self.temp_settings['normal_color']}"
         )
         self.btn_color_norm.clicked.connect(
             lambda: self.pick_color("normal_color", self.btn_color_norm)
         )
-        form_layout.addRow("Context Text Color:", self.btn_color_norm)
+        color_layout.addRow("Context Color:", self.btn_color_norm)
 
-        self.check_stroke_context = QCheckBox()
-        self.check_stroke_context.setChecked(
-            self.temp_settings.get("stroke_enabled_context", True)
+        self.btn_color_stroke = QPushButton("Choose...")
+        self.btn_color_stroke.setFixedWidth(100)
+        self.btn_color_stroke.setStyleSheet(
+            f"background-color: {self.temp_settings.get('stroke_color', '#000000')}"
         )
-        self.check_stroke_context.toggled.connect(
-            lambda v: self.update_setting("stroke_enabled_context", v)
+        self.btn_color_stroke.clicked.connect(
+            lambda: self.pick_color("stroke_color", self.btn_color_stroke)
         )
-        form_layout.addRow("Context Stroke:", self.check_stroke_context)
+        color_layout.addRow("Stroke Color:", self.btn_color_stroke)
 
-        # Layout / Position
-        self.spin_lines = QSpinBox()
-        self.spin_lines.setRange(0, 5)
-        self.spin_lines.setValue(self.temp_settings["num_preview_lines"])
-        self.spin_lines.valueChanged.connect(
-            lambda v: self.update_setting("num_preview_lines", v)
+        self.check_anim = QCheckBox("Smooth Cross-fades")
+        self.check_anim.setChecked(self.temp_settings.get("enable_animations", True))
+        self.check_anim.toggled.connect(
+            lambda v: self.update_setting("enable_animations", v)
         )
-        form_layout.addRow("Context Lines:", self.spin_lines)
+        color_layout.addRow("Animations:", self.check_anim)
 
-        # Vertical Position (Slider + SpinBox)
-        self.pos_layout = QHBoxLayout()
+        color_group.setLayout(color_layout)
+        layout.addWidget(color_group)
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
+
+    def create_layout_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        # Position Group
+        pos_group = QGroupBox("Screen Position")
+        pos_layout = QVBoxLayout()
+
+        h_layout = QHBoxLayout()
         self.slider_offset = QSlider(Qt.Orientation.Horizontal)
         self.slider_offset.setRange(0, 1200)
         self.slider_offset.setValue(self.temp_settings["window_y_offset"])
@@ -211,18 +245,87 @@ class SettingsDialog(QDialog):
             lambda v: self.update_setting("window_y_offset", v)
         )
 
-        # Sync slider and spinbox
         self.slider_offset.valueChanged.connect(self.spin_offset.setValue)
         self.spin_offset.valueChanged.connect(self.slider_offset.setValue)
 
-        self.pos_layout.addWidget(QLabel("Low"))
-        self.pos_layout.addWidget(self.slider_offset)
-        self.pos_layout.addWidget(QLabel("High"))
-        self.pos_layout.addWidget(self.spin_offset)
+        h_layout.addWidget(QLabel("Bottom"))
+        h_layout.addWidget(self.slider_offset)
+        h_layout.addWidget(QLabel("Top"))
+        h_layout.addWidget(self.spin_offset)
 
-        form_layout.addRow("Vertical Position:", self.pos_layout)
+        pos_layout.addLayout(h_layout)
+        pos_layout.addWidget(
+            QLabel("<small>Adjust the vertical height of the lyrics overlay.</small>")
+        )
+        pos_group.setLayout(pos_layout)
+        layout.addWidget(pos_group)
 
-        # Sync Offset
+        # Context Group
+        ctx_group = QGroupBox("Lyric Lines")
+        ctx_layout = QFormLayout()
+
+        self.spin_lines = QSpinBox()
+        self.spin_lines.setRange(0, 5)
+        self.spin_lines.setValue(self.temp_settings["num_preview_lines"])
+        self.spin_lines.valueChanged.connect(
+            lambda v: self.update_setting("num_preview_lines", v)
+        )
+        ctx_layout.addRow("Context Line Count:", self.spin_lines)
+
+        self.check_history = QCheckBox("Show Previous Lines")
+        self.check_history.setChecked(self.temp_settings.get("show_history", True))
+        self.check_history.toggled.connect(
+            lambda v: self.update_setting("show_history", v)
+        )
+        ctx_layout.addRow(self.check_history)
+
+        self.check_future = QCheckBox("Show Upcoming Lines")
+        self.check_future.setChecked(self.temp_settings.get("show_future", True))
+        self.check_future.toggled.connect(
+            lambda v: self.update_setting("show_future", v)
+        )
+        ctx_layout.addRow(self.check_future)
+
+        ctx_group.setLayout(ctx_layout)
+        layout.addWidget(ctx_group)
+
+        # Stroke Toggle Group
+        stroke_group = QGroupBox("Stroke/Outline Toggles")
+        stroke_layout = QHBoxLayout()
+
+        self.check_stroke_high = QCheckBox("On Highlight")
+        self.check_stroke_high.setChecked(
+            self.temp_settings.get("stroke_enabled_highlight", True)
+        )
+        self.check_stroke_high.toggled.connect(
+            lambda v: self.update_setting("stroke_enabled_highlight", v)
+        )
+
+        self.check_stroke_context = QCheckBox("On Context")
+        self.check_stroke_context.setChecked(
+            self.temp_settings.get("stroke_enabled_context", True)
+        )
+        self.check_stroke_context.toggled.connect(
+            lambda v: self.update_setting("stroke_enabled_context", v)
+        )
+
+        stroke_layout.addWidget(self.check_stroke_high)
+        stroke_layout.addWidget(self.check_stroke_context)
+        stroke_group.setLayout(stroke_layout)
+        layout.addWidget(stroke_group)
+
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
+
+    def create_system_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        # Sync Group
+        sync_group = QGroupBox("Timing & Sync")
+        sync_layout = QFormLayout()
+
         self.spin_sync = QDoubleSpinBox()
         self.spin_sync.setRange(-10.0, 10.0)
         self.spin_sync.setSingleStep(0.1)
@@ -230,80 +333,77 @@ class SettingsDialog(QDialog):
         self.spin_sync.valueChanged.connect(
             lambda v: self.update_setting("sync_offset_ms", int(v * 1000))
         )
-        form_layout.addRow("Sync Offset (sec):", self.spin_sync)
-
-        # Animations
-        self.check_anim = QCheckBox()
-        self.check_anim.setChecked(self.temp_settings.get("enable_animations", True))
-        self.check_anim.toggled.connect(
-            lambda v: self.update_setting("enable_animations", v)
+        sync_layout.addRow("Sync Offset (sec):", self.spin_sync)
+        sync_layout.addRow(
+            QLabel("<small>Use this if lyrics are consistently early or late.</small>")
         )
-        form_layout.addRow("Enable Animations:", self.check_anim)
 
-        # Hotkey
+        sync_group.setLayout(sync_layout)
+        layout.addWidget(sync_group)
+
+        # Controls Group
+        ctrl_group = QGroupBox("Controls")
+        ctrl_layout = QFormLayout()
+
         self.hotkey_edit = QKeySequenceEdit()
         current_hotkey = self.temp_settings.get("toggle_hotkey", "")
         if current_hotkey:
             self.hotkey_edit.setKeySequence(QKeySequence(current_hotkey))
-
         self.hotkey_edit.keySequenceChanged.connect(self.update_hotkey)
-        form_layout.addRow("Toggle Hotkey:", self.hotkey_edit)
 
-        layout.addLayout(form_layout)
-
-        # Buttons
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save
-            | QDialogButtonBox.StandardButton.Cancel
-            | QDialogButtonBox.StandardButton.RestoreDefaults
+        ctrl_layout.addRow("Toggle Overlay Hotkey:", self.hotkey_edit)
+        ctrl_layout.addRow(
+            QLabel(
+                "<small>Click and press a key combination (e.g., Ctrl+L) to hide/show.</small>"
+            )
         )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
-            self.reset_defaults
-        )
-        layout.addWidget(buttons)
 
-        self.setLayout(layout)
-        self.update_preview()
+        ctrl_group.setLayout(ctrl_layout)
+        layout.addWidget(ctrl_group)
+
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
 
     def update_preview(self):
-        # --- Context Style ---
         context_font = QFont(
-            self.temp_settings["font_family"],
-            self.temp_settings["font_size_normal"],
+            self.temp_settings["font_family"], self.temp_settings["font_size_normal"]
         )
         context_color = self.temp_settings["normal_color"]
         stroke_color = self.temp_settings.get("stroke_color", "#000000")
-        show_context = self.temp_settings["num_preview_lines"] > 0
 
+        num_lines = self.temp_settings["num_preview_lines"]
+        show_history = self.temp_settings.get("show_history", True) and num_lines > 0
+        show_future = self.temp_settings.get("show_future", True) and num_lines > 0
+
+        # Update History Preview
         self.preview_prev.setFont(context_font)
         self.preview_prev.setStyleSheet(f"color: {context_color};")
         self.preview_prev.setStrokeColor(stroke_color)
         self.preview_prev.setStrokeEnabled(
             self.temp_settings.get("stroke_enabled_context", True)
         )
-        self.preview_prev.setVisible(show_context)
+        self.preview_prev.setVisible(show_history)
 
+        # Update Future Preview
         self.preview_next.setFont(context_font)
         self.preview_next.setStyleSheet(f"color: {context_color};")
         self.preview_next.setStrokeColor(stroke_color)
         self.preview_next.setStrokeEnabled(
             self.temp_settings.get("stroke_enabled_context", True)
         )
-        self.preview_next.setVisible(show_context)
+        self.preview_next.setVisible(show_future)
 
-        # --- Highlight Style ---
+        # Update Highlight Preview
         font = QFont(
             self.temp_settings["font_family"],
             self.temp_settings["font_size_highlight"],
             QFont.Weight.Bold,
         )
         self.preview_label.setFont(font)
-
-        text_color = self.temp_settings["highlight_color"]
-
-        self.preview_label.setStyleSheet(f"color: {text_color};")
+        self.preview_label.setStyleSheet(
+            f"color: {self.temp_settings['highlight_color']};"
+        )
         self.preview_label.setStrokeColor(stroke_color)
         self.preview_label.setStrokeEnabled(
             self.temp_settings.get("stroke_enabled_highlight", True)
@@ -316,7 +416,6 @@ class SettingsDialog(QDialog):
     def update_hotkey(self, sequence):
         hotkey_str = sequence.toString(QKeySequence.SequenceFormat.PortableText)
         self.temp_settings["toggle_hotkey"] = hotkey_str
-        # No preview update needed for hotkey
 
     def update_font(self, font):
         self.temp_settings["font_family"] = font.family()
@@ -335,18 +434,10 @@ class SettingsDialog(QDialog):
     def reset_defaults(self):
         self.temp_settings = DEFAULT_SETTINGS.copy()
 
-        # Update UI elements
+        # Appearance
         self.font_combo.setCurrentFont(QFont(self.temp_settings["font_family"]))
         self.spin_size_high.setValue(self.temp_settings["font_size_highlight"])
         self.spin_size_norm.setValue(self.temp_settings["font_size_normal"])
-
-        self.check_stroke_high.setChecked(
-            self.temp_settings["stroke_enabled_highlight"]
-        )
-        self.check_stroke_context.setChecked(
-            self.temp_settings["stroke_enabled_context"]
-        )
-
         self.btn_color_high.setStyleSheet(
             f"background-color: {self.temp_settings['highlight_color']}"
         )
@@ -356,13 +447,22 @@ class SettingsDialog(QDialog):
         self.btn_color_norm.setStyleSheet(
             f"background-color: {self.temp_settings['normal_color']}"
         )
-
-        self.spin_lines.setValue(self.temp_settings["num_preview_lines"])
-        self.slider_offset.setValue(self.temp_settings["window_y_offset"])
-        self.spin_offset.setValue(self.temp_settings["window_y_offset"])
-        self.spin_sync.setValue(self.temp_settings.get("sync_offset_ms", 0) / 1000.0)
         self.check_anim.setChecked(self.temp_settings.get("enable_animations", True))
 
+        # Layout
+        self.spin_lines.setValue(self.temp_settings["num_preview_lines"])
+        self.check_history.setChecked(self.temp_settings.get("show_history", True))
+        self.check_future.setChecked(self.temp_settings.get("show_future", True))
+        self.check_stroke_high.setChecked(
+            self.temp_settings.get("stroke_enabled_highlight", True)
+        )
+        self.check_stroke_context.setChecked(
+            self.temp_settings.get("stroke_enabled_context", True)
+        )
+        self.slider_offset.setValue(self.temp_settings["window_y_offset"])
+
+        # System
+        self.spin_sync.setValue(self.temp_settings.get("sync_offset_ms", 0) / 1000.0)
         hotkey = self.temp_settings.get("toggle_hotkey", "")
         self.hotkey_edit.setKeySequence(QKeySequence(hotkey))
 
