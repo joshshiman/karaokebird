@@ -376,23 +376,25 @@ class OverlayWindow(QWidget):
             self.system_message_time = time.time()
             self.curr_label.setText(msg)
             # Clear context lines when showing status
-            for l in self.prev_labels:
-                l.setText("")
-            for l in self.next_labels:
-                l.setText("")
+            for lbl in self.prev_labels:
+                lbl.setText("")
+            for lbl in self.next_labels:
+                lbl.setText("")
 
     def on_lyrics_found(self, data):
         self.lyrics_data = data
-        self.current_lyric_index = -1
         if not data:
             self.curr_label.setText("No synced lyrics found")
-            for l in self.prev_labels:
-                l.setText("")
-            for l in self.next_labels:
-                l.setText("")
+            for lbl in self.prev_labels:
+                lbl.setText("")
+            for lbl in self.next_labels:
+                lbl.setText("")
         else:
-            # Force an update to show Title/Lyrics loaded immediately
-            self.update_display(-1)
+            # Let update_frame determine the correct starting point
+            # based on current playback position. We force an update by
+            # setting current index to an impossible value.
+            self.current_lyric_index = -999
+            self.update_frame()
 
     def on_playback_sync(self, is_playing, position, duration, capture_time):
         if self.is_playing and is_playing:
@@ -488,14 +490,7 @@ class OverlayWindow(QWidget):
             self.system_message_time = 0
 
         # 1. Update Current
-        target_text = self.get_line_text(index, is_context=False)
-
-        # For system messages (index < 0), apply the 5-second fade out logic
-        if index < 0 and self.system_message_time > 0:
-            if time.time() - self.system_message_time > 5:
-                target_text = ""
-
-        self.curr_label.setText(target_text)
+        self.curr_label.setText(self.get_line_text(index, is_context=False))
 
         # Context labels (previous/next) should be hidden if showing a system message
         # UNLESS that system message is the "..." gap marker (which has index >= 0)
