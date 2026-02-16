@@ -2,7 +2,7 @@ import json
 import os
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QKeySequenceEdit,
     QLabel,
     QPushButton,
     QSlider,
@@ -38,6 +39,7 @@ DEFAULT_SETTINGS = {
     "enable_animations": False,
     "stroke_enabled_highlight": True,
     "stroke_enabled_context": False,
+    "toggle_hotkey": "",
 }
 
 
@@ -238,6 +240,15 @@ class SettingsDialog(QDialog):
         )
         form_layout.addRow("Enable Animations:", self.check_anim)
 
+        # Hotkey
+        self.hotkey_edit = QKeySequenceEdit()
+        current_hotkey = self.temp_settings.get("toggle_hotkey", "")
+        if current_hotkey:
+            self.hotkey_edit.setKeySequence(QKeySequence(current_hotkey))
+
+        self.hotkey_edit.keySequenceChanged.connect(self.update_hotkey)
+        form_layout.addRow("Toggle Hotkey:", self.hotkey_edit)
+
         layout.addLayout(form_layout)
 
         # Buttons
@@ -302,6 +313,11 @@ class SettingsDialog(QDialog):
         self.temp_settings[key] = value
         self.update_preview()
 
+    def update_hotkey(self, sequence):
+        hotkey_str = sequence.toString(QKeySequence.SequenceFormat.PortableText)
+        self.temp_settings["toggle_hotkey"] = hotkey_str
+        # No preview update needed for hotkey
+
     def update_font(self, font):
         self.temp_settings["font_family"] = font.family()
         self.update_preview()
@@ -346,6 +362,10 @@ class SettingsDialog(QDialog):
         self.spin_offset.setValue(self.temp_settings["window_y_offset"])
         self.spin_sync.setValue(self.temp_settings.get("sync_offset_ms", 0) / 1000.0)
         self.check_anim.setChecked(self.temp_settings.get("enable_animations", True))
+
+        hotkey = self.temp_settings.get("toggle_hotkey", "")
+        self.hotkey_edit.setKeySequence(QKeySequence(hotkey))
+
         self.update_preview()
 
     def accept(self):

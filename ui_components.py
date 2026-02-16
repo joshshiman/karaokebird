@@ -40,27 +40,48 @@ class StrokedLabel(QLabel):
             super().setText(text)
             return
 
-        if self.text() == text:
+        # If we are already displaying this text, or it's already queued to be shown, skip.
+        if self.text() == text or (
+            self._anim.state() == QPropertyAnimation.State.Running
+            and self._pending_text == text
+        ):
             return
 
         self._pending_text = text
 
         if self._anim.state() == QPropertyAnimation.State.Running:
-            if self._anim.direction() == QPropertyAnimation.Direction.Backward:
-                self._anim.stop()
-                self._anim.setDirection(QPropertyAnimation.Direction.Forward)
-                self._anim.start()
+            # If we are already fading out, just update the target _pending_text and continue.
+            if self._anim.direction() == QPropertyAnimation.Direction.Forward:
+                return
+
+            # If we were fading in, reverse to fade out the now-stale text.
+            self._anim.stop()
+            self._anim.setDirection(QPropertyAnimation.Direction.Forward)
+            # Start from current opacity for smoothness
+            self._anim.setStartValue(self._text_opacity)
+            self._anim.setEndValue(0.0)
+            # Adjust duration based on current opacity
+            duration = int(150 * self._text_opacity)
+            self._anim.setDuration(max(20, duration))
+            self._anim.start()
             return
 
+        # Not running: Start a fresh fade out
         self._anim.setDirection(QPropertyAnimation.Direction.Forward)
+        self._anim.setDuration(150)
         self._anim.setStartValue(1.0)
         self._anim.setEndValue(0.0)
         self._anim.start()
 
     def _on_anim_finished(self):
         if self._anim.direction() == QPropertyAnimation.Direction.Forward:
+            # Faded out. Update the actual label text and fade back in.
             super().setText(self._pending_text)
             self._anim.setDirection(QPropertyAnimation.Direction.Backward)
+            # Ensure we fade back to full opacity
+            self._anim.setStartValue(1.0)
+            self._anim.setEndValue(0.0)
+            self._anim.setDuration(150)
             self._anim.start()
 
     def paintEvent(self, event):
