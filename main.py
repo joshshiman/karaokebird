@@ -118,7 +118,6 @@ class SpotifyReader(QObject):
             if track_id != self.current_track_id and title:
                 self.current_track_id = track_id
                 self.track_changed.emit(title, artist)
-                self.status_message.emit(f"Playing: {title}")
 
                 # Fetch lyrics in background
                 asyncio.create_task(self.fetch_lyrics(title, artist))
@@ -175,24 +174,12 @@ class SpotifyReader(QObject):
         if not lyrics:
             return []
 
-        # Inject "..." for long gaps (instrumentals)
+        # Inject "..." for initial song intro if it's long
         processed_lyrics = []
-
-        # Initial gap if song doesn't start immediately
-        # Show "..." after 5 seconds of the title/status showing
         if lyrics[0]["time"] > 8000:
             processed_lyrics.append({"time": 5000, "text": "..."})
 
-        for i in range(len(lyrics)):
-            processed_lyrics.append(lyrics[i])
-            if i < len(lyrics) - 1:
-                gap = lyrics[i + 1]["time"] - lyrics[i]["time"]
-                # If gap is more than 8 seconds, show "..." 3 seconds after the line ends
-                if gap > 8000:
-                    processed_lyrics.append(
-                        {"time": lyrics[i]["time"] + 3000, "text": "..."}
-                    )
-
+        processed_lyrics.extend(lyrics)
         return processed_lyrics
 
 
@@ -367,14 +354,16 @@ class OverlayWindow(QWidget):
     def set_track_info(self, title, artist):
         self.current_title = title
         self.current_artist = artist
-        # Reset lyrics so we show searching status
+        # Reset lyrics and show title immediately
         self.lyrics_data = []
-        self.update_status(f"Searching: {title} - {artist}")
+        self.current_lyric_index = -1
+        self.update_display(-1)
 
     def update_status(self, msg):
         # Since we removed the status label to clean up the look, we might just print to console
         # or temporarily show it on the current line if no lyrics are loaded
         if not self.lyrics_data:
+            self.system_message_time = time.time()
             self.curr_label.setText(msg)
             # Clear context lines when showing status
             for l in self.prev_labels:
@@ -476,13 +465,7 @@ class OverlayWindow(QWidget):
 
         # Main label (index < 0) system messages
         if index == -1:
-            if not self.lyrics_data:
-                return f"Now Playing: {self.current_title}"
-            else:
-                # If lyrics are loaded but haven't started yet,
-                # we return empty string to let update_frame handle the fade-out
-                # OR return the title if it's still within the 5s window.
-                return f"Now Playing: {self.current_title}"
+            return f"Now Playing: {self.current_title}" if self.current_title else ""
         elif index == -2:
             return "Lyrics loaded!"
         return ""
@@ -497,9 +480,8 @@ class OverlayWindow(QWidget):
         # 1. Update Current
         target_text = self.get_line_text(index, is_context=False)
 
-        # If we are in the "start of song" state (index -1) and have lyrics,
-        # but the timer has expired, we want to clear the text.
-        if index == -1 and self.lyrics_data and self.system_message_time > 0:
+        # For system messages (index < 0), apply the 5-second fade out logic
+        if index < 0 and self.system_message_time > 0:
             if time.time() - self.system_message_time > 5:
                 target_text = ""
 
