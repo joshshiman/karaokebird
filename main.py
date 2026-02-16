@@ -66,20 +66,45 @@ class SpotifyReader(QObject):
             return
 
         # Get Timeline & Playback Status
-        timeline = self.current_session.get_timeline_properties()
-        playback_info = self.current_session.get_playback_info()
-        capture_time = time.perf_counter() * 1000
+        try:
+            timeline = self.current_session.get_timeline_properties()
+            playback_info = self.current_session.get_playback_info()
+            # Capture timestamps as close to the call as possible
+            capture_time = time.perf_counter() * 1000
+            sys_now_ms = time.time() * 1000
 
-        if timeline and playback_info:
-            position = timeline.position.total_seconds() * 1000
-            duration = timeline.end_time.total_seconds() * 1000
-            is_playing = (
-                playback_info.playback_status
-                == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
-            )
-            self.playback_sync.emit(
-                is_playing, int(position), int(duration), capture_time
-            )
+            if timeline and playback_info:
+                raw_position_ms = timeline.position.total_seconds() * 1000
+
+                # Handle varying SMTC timestamp formats
+                try:
+                    last_update_dt = timeline.last_updated_time
+                    if hasattr(last_update_dt, "timestamp"):
+                        last_update_ms = last_update_dt.timestamp() * 1000
+                    else:
+                        last_update_ms = last_update_dt.to_datetime().timestamp() * 1000
+                except (AttributeError, ValueError, Exception):
+                    last_update_ms = sys_now_ms
+
+                elapsed_since_update = sys_now_ms - last_update_ms
+
+                # Apply correction for the time passed since the media player last updated its position.
+                # If the difference is negative or too large, ignore it.
+                if 0 <= elapsed_since_update < 10000:
+                    position = raw_position_ms + elapsed_since_update
+                else:
+                    position = raw_position_ms
+
+                duration = timeline.end_time.total_seconds() * 1000
+                is_playing = (
+                    playback_info.playback_status
+                    == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
+                )
+                self.playback_sync.emit(
+                    is_playing, int(position), int(duration), capture_time
+                )
+        except Exception as e:
+            print(f"Error polling SMTC: {e}")
 
         # Get Metadata (Title/Artist)
         try:
@@ -146,7 +171,28 @@ class SpotifyReader(QObject):
 
         # Sort by time just in case
         lyrics.sort(key=lambda x: x["time"])
-        return lyrics
+
+        # Inject "..." for long gaps (instrumentals)
+        if not lyrics:
+            return []
+
+        processed_lyrics = []
+        # Initial gap if song doesn't start immediately
+        # Show "..." after 5 seconds of the title showing
+        if lyrics[0]["time"] > 8000:
+            processed_lyrics.append({"time": 5000, "text": "..."})
+
+        for i in range(len(lyrics)):
+            processed_lyrics.append(lyrics[i])
+            if i < len(lyrics) - 1:
+                gap = lyrics[i + 1]["time"] - lyrics[i]["time"]
+                # If gap is more than 8 seconds, show "..." 3 seconds after the line ends
+                if gap > 8000:
+                    processed_lyrics.append(
+                        {"time": lyrics[i]["time"] + 3000, "text": "..."}
+                    )
+
+        return processed_lyrics
 
 
 # --- Frontend GUI ---
@@ -356,15 +402,18 @@ class OverlayWindow(QWidget):
             )
             diff = position - expected
 
-            # DEADBAND SYNC:
+            # STRETCHED MONOTONIC SYNC:
             # 1. Large Jump (abs(diff) > 2000ms): Assume Seek/Skip. Snap instantly.
-            # 2. Significant Drift (abs(diff) > 100ms): Catch up or slow down.
-            # 3. Micro Drift (abs(diff) <= 100ms): Ignore tiny fluctuations for smoothness.
-
-            if abs(diff) > 2000 or abs(diff) > 100:
+            if abs(diff) > 2000:
                 self.last_sync_track_time = position
                 self.last_sync_sys_time = capture_time
-            # else: Keep extrapolating from old anchor
+            # 2. Forward Drift: If we are behind the music by > 150ms, snap forward.
+            elif diff > 150:
+                self.last_sync_track_time = position
+                self.last_sync_sys_time = capture_time
+            # 3. Backward Drift: If the reported time is behind our expectation,
+            # we ignore it unless it's a huge jump. This prevents "stuttering"
+            # where lyrics jump back and then forward again due to jitter.
         else:
             # Not playing or just starting -> Snap to reported position
             self.last_sync_track_time = position
@@ -413,17 +462,22 @@ class OverlayWindow(QWidget):
                 if self.curr_label.text():
                     self.curr_label.setText("")
 
-    def get_line_text(self, index):
+    def get_line_text(self, index, is_context=False):
+        """
+        is_context=True means this is for a previous/next label.
+        System messages (index < 0) should NOT show in context labels.
+        """
         if 0 <= index < len(self.lyrics_data):
             return self.lyrics_data[index]["text"]
-        elif index == -1:
+
+        if is_context:
+            return ""
+
+        if index == -1:
             return f"Now Playing: {self.current_title}"
         elif index == -2:
             return "Lyrics loaded!"
-        elif index < -2:
-            return ""
-        else:
-            return ""
+        return ""
 
     def update_display(self, index):
         # index is the index of the CURRENT line in self.lyrics_data
@@ -433,25 +487,29 @@ class OverlayWindow(QWidget):
             self.system_message_time = 0
 
         # 1. Update Current
-        self.curr_label.setText(self.get_line_text(index))
+        self.curr_label.setText(self.get_line_text(index, is_context=False))
+
+        # Context labels (previous/next) should be hidden if showing a system message
+        show_context = index >= 0
 
         # 2. Update Previous Labels
-        # self.prev_labels[0] is the top-most (furthest back).
-        # self.prev_labels[-1] is right above current.
         num_prev = len(self.prev_labels)
         for i, lbl in enumerate(self.prev_labels):
-            # i=0 (top) -> if num_prev=2 -> offset = -2
-            # i=1 (bottom) -> if num_prev=2 -> offset = -1
             offset = i - num_prev
             target_idx = index + offset
-            lbl.setText(self.get_line_text(target_idx))
+            text = (
+                self.get_line_text(target_idx, is_context=True) if show_context else ""
+            )
+            lbl.setText(text)
 
         # 3. Update Next Labels
-        # self.next_labels[0] is right below current.
         for i, lbl in enumerate(self.next_labels):
             offset = i + 1
             target_idx = index + offset
-            lbl.setText(self.get_line_text(target_idx))
+            text = (
+                self.get_line_text(target_idx, is_context=True) if show_context else ""
+            )
+            lbl.setText(text)
 
 
 # --- Main Entry ---
@@ -461,7 +519,7 @@ async def main_loop(reader):
     await reader.setup()
     while True:
         await reader.poll_status()
-        await asyncio.sleep(0.5)  # Poll frequency
+        await asyncio.sleep(0.2)  # Higher poll frequency (5Hz)
 
 
 def resource_path(relative_path):
