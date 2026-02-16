@@ -166,19 +166,20 @@ class SpotifyReader(QObject):
                     total_ms = int((minutes * 60 + seconds) * 1000)
 
                     lyrics.append({"time": total_ms, "text": text})
-            except Exception:
+            except (ValueError, IndexError):
                 continue
 
         # Sort by time just in case
         lyrics.sort(key=lambda x: x["time"])
 
-        # Inject "..." for long gaps (instrumentals)
         if not lyrics:
             return []
 
+        # Inject "..." for long gaps (instrumentals)
         processed_lyrics = []
+
         # Initial gap if song doesn't start immediately
-        # Show "..." after 5 seconds of the title showing
+        # Show "..." after 5 seconds of the title/status showing
         if lyrics[0]["time"] > 8000:
             processed_lyrics.append({"time": 5000, "text": "..."})
 
@@ -465,16 +466,23 @@ class OverlayWindow(QWidget):
     def get_line_text(self, index, is_context=False):
         """
         is_context=True means this is for a previous/next label.
-        System messages (index < 0) should NOT show in context labels.
         """
         if 0 <= index < len(self.lyrics_data):
             return self.lyrics_data[index]["text"]
 
+        # If it's a context label (prev/next), don't show system messages
         if is_context:
             return ""
 
+        # Main label (index < 0) system messages
         if index == -1:
-            return f"Now Playing: {self.current_title}"
+            if not self.lyrics_data:
+                return f"Now Playing: {self.current_title}"
+            else:
+                # If lyrics are loaded but haven't started yet,
+                # we return empty string to let update_frame handle the fade-out
+                # OR return the title if it's still within the 5s window.
+                return f"Now Playing: {self.current_title}"
         elif index == -2:
             return "Lyrics loaded!"
         return ""
@@ -487,9 +495,18 @@ class OverlayWindow(QWidget):
             self.system_message_time = 0
 
         # 1. Update Current
-        self.curr_label.setText(self.get_line_text(index, is_context=False))
+        target_text = self.get_line_text(index, is_context=False)
+
+        # If we are in the "start of song" state (index -1) and have lyrics,
+        # but the timer has expired, we want to clear the text.
+        if index == -1 and self.lyrics_data and self.system_message_time > 0:
+            if time.time() - self.system_message_time > 5:
+                target_text = ""
+
+        self.curr_label.setText(target_text)
 
         # Context labels (previous/next) should be hidden if showing a system message
+        # UNLESS that system message is the "..." gap marker (which has index >= 0)
         show_context = index >= 0
 
         # 2. Update Previous Labels
