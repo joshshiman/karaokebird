@@ -37,9 +37,8 @@ DEFAULT_SETTINGS = {
     "font_size_highlight": 24,
     "font_size_normal": 14,
     "window_y_offset": 300,
-    "num_preview_lines": 1,
-    "show_history": True,
-    "show_future": True,
+    "num_history_lines": 1,
+    "num_future_lines": 1,
     "sync_offset_ms": 0,
     "enable_animations": False,
     "stroke_enabled_highlight": True,
@@ -264,27 +263,21 @@ class SettingsDialog(QDialog):
         ctx_group = QGroupBox("Lyric Lines")
         ctx_layout = QFormLayout()
 
-        self.spin_lines = QSpinBox()
-        self.spin_lines.setRange(0, 5)
-        self.spin_lines.setValue(self.temp_settings["num_preview_lines"])
-        self.spin_lines.valueChanged.connect(
-            lambda v: self.update_setting("num_preview_lines", v)
+        self.spin_history = QSpinBox()
+        self.spin_history.setRange(0, 5)
+        self.spin_history.setValue(self.temp_settings.get("num_history_lines", 1))
+        self.spin_history.valueChanged.connect(
+            lambda v: self.update_setting("num_history_lines", v)
         )
-        ctx_layout.addRow("Context Line Count:", self.spin_lines)
+        ctx_layout.addRow("History Lines:", self.spin_history)
 
-        self.check_history = QCheckBox("Show Previous Lines")
-        self.check_history.setChecked(self.temp_settings.get("show_history", True))
-        self.check_history.toggled.connect(
-            lambda v: self.update_setting("show_history", v)
+        self.spin_future = QSpinBox()
+        self.spin_future.setRange(0, 5)
+        self.spin_future.setValue(self.temp_settings.get("num_future_lines", 1))
+        self.spin_future.valueChanged.connect(
+            lambda v: self.update_setting("num_future_lines", v)
         )
-        ctx_layout.addRow(self.check_history)
-
-        self.check_future = QCheckBox("Show Upcoming Lines")
-        self.check_future.setChecked(self.temp_settings.get("show_future", True))
-        self.check_future.toggled.connect(
-            lambda v: self.update_setting("show_future", v)
-        )
-        ctx_layout.addRow(self.check_future)
+        ctx_layout.addRow("Upcoming Lines:", self.spin_future)
 
         ctx_group.setLayout(ctx_layout)
         layout.addWidget(ctx_group)
@@ -372,9 +365,8 @@ class SettingsDialog(QDialog):
         context_color = self.temp_settings["normal_color"]
         stroke_color = self.temp_settings.get("stroke_color", "#000000")
 
-        num_lines = self.temp_settings["num_preview_lines"]
-        show_history = self.temp_settings.get("show_history", True) and num_lines > 0
-        show_future = self.temp_settings.get("show_future", True) and num_lines > 0
+        num_history = self.temp_settings.get("num_history_lines", 1)
+        num_future = self.temp_settings.get("num_future_lines", 1)
 
         # Update History Preview
         self.preview_prev.setFont(context_font)
@@ -383,7 +375,7 @@ class SettingsDialog(QDialog):
         self.preview_prev.setStrokeEnabled(
             self.temp_settings.get("stroke_enabled_context", True)
         )
-        self.preview_prev.setVisible(show_history)
+        self.preview_prev.setVisible(num_history > 0)
 
         # Update Future Preview
         self.preview_next.setFont(context_font)
@@ -392,7 +384,7 @@ class SettingsDialog(QDialog):
         self.preview_next.setStrokeEnabled(
             self.temp_settings.get("stroke_enabled_context", True)
         )
-        self.preview_next.setVisible(show_future)
+        self.preview_next.setVisible(num_future > 0)
 
         # Update Highlight Preview
         font = QFont(
@@ -450,9 +442,8 @@ class SettingsDialog(QDialog):
         self.check_anim.setChecked(self.temp_settings.get("enable_animations", True))
 
         # Layout
-        self.spin_lines.setValue(self.temp_settings["num_preview_lines"])
-        self.check_history.setChecked(self.temp_settings.get("show_history", True))
-        self.check_future.setChecked(self.temp_settings.get("show_future", True))
+        self.spin_history.setValue(self.temp_settings.get("num_history_lines", 1))
+        self.spin_future.setValue(self.temp_settings.get("num_future_lines", 1))
         self.check_stroke_high.setChecked(
             self.temp_settings.get("stroke_enabled_highlight", True)
         )

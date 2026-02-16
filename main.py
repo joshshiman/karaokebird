@@ -292,21 +292,21 @@ class OverlayWindow(QWidget):
         self.prev_labels = []
         self.next_labels = []
 
-        num_lines = self.settings["num_preview_lines"]
+        num_history = self.settings.get("num_history_lines", 1)
+        num_future = self.settings.get("num_future_lines", 1)
         font_family = self.settings["font_family"]
 
         # --- Previous Lines ---
-        if self.settings.get("show_history", True):
-            for _ in range(num_lines):
-                l = StrokedLabel("")
-                l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                l.setFont(QFont(font_family, self.settings["font_size_normal"]))
-                l.setStyleSheet(f"color: {self.settings['normal_color']};")
-                l.setStrokeColor(self.settings.get("stroke_color", "#000000"))
-                l.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
-                l.enable_animation = self.settings.get("enable_animations", True)
-                self.prev_labels.append(l)
-                self.main_layout.addWidget(l)
+        for _ in range(num_history):
+            l = StrokedLabel("")
+            l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            l.setFont(QFont(font_family, self.settings["font_size_normal"]))
+            l.setStyleSheet(f"color: {self.settings['normal_color']};")
+            l.setStrokeColor(self.settings.get("stroke_color", "#000000"))
+            l.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
+            l.enable_animation = self.settings.get("enable_animations", True)
+            self.prev_labels.append(l)
+            self.main_layout.addWidget(l)
 
         # --- Current Line ---
         self.curr_label.setFont(
@@ -329,17 +329,16 @@ class OverlayWindow(QWidget):
         self.main_layout.addWidget(self.curr_label)
 
         # --- Next Lines ---
-        if self.settings.get("show_future", True):
-            for _ in range(num_lines):
-                l = StrokedLabel("")
-                l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                l.setFont(QFont(font_family, self.settings["font_size_normal"]))
-                l.setStyleSheet(f"color: {self.settings['normal_color']};")
-                l.setStrokeColor(self.settings.get("stroke_color", "#000000"))
-                l.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
-                l.enable_animation = self.settings.get("enable_animations", True)
-                self.next_labels.append(l)
-                self.main_layout.addWidget(l)
+        for _ in range(num_future):
+            l = StrokedLabel("")
+            l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            l.setFont(QFont(font_family, self.settings["font_size_normal"]))
+            l.setStyleSheet(f"color: {self.settings['normal_color']};")
+            l.setStrokeColor(self.settings.get("stroke_color", "#000000"))
+            l.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
+            l.enable_animation = self.settings.get("enable_animations", True)
+            self.next_labels.append(l)
+            self.main_layout.addWidget(l)
 
         # Force refresh of text content
         if self.current_lyric_index != -1:
