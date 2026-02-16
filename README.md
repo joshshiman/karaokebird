@@ -7,7 +7,7 @@
 </h1>
 
 <p align="center">
-  The ultimate floating karaoke companion for your Windows desktop.
+  The lightweight, transparent lyrics overlay for Windows.
 </p>
 
 <p align="center">
@@ -16,21 +16,21 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p>
 
-**KaraokeBird** is a lightweight, open-source application that brings the karaoke experience directly to your desktop. It detects what you are playing on Spotify (or any media player) and displays time-synced lyrics in a beautiful, transparent overlay that sits on top of your windows—letting you sing along while you work, game, or browse.
+**KaraokeBird** minimal, open-source lyrics visualizer that lives on your desktop. It detects what you are playing on Spotify (or any media player) and displays time-synced lyrics in a beautiful, transparent overlay that sits on top of your windows—letting you sing along while you work, game, or browse.
 
 # 🚀 Features
 
 KaraokeBird is designed to be seamless and unobtrusive.
 
-🎤 **Time-Synced Lyrics**: Automatically fetches `.lrc` files to display lyrics exactly when they are sung.
+🎤 **Real-Time Sync:**: Automatically fetches `.lrc` files to display lyrics exactly when they are sung.
 
-👻 **Click-Through Overlay**: The window is fully transparent to input. You can click, type, and interact with windows behind the lyrics as if they weren't there.
+👻 **Zero-Interruption Overlay**: The window uses a click-through window and is fully transparent to input. You can click, type, and interact with windows behind the lyrics as if they weren't there.
 
-🎧 **Universal Support**: Works with **Spotify**, **YouTube Music**, **Apple Music**, and browser media players via Windows Media Controls.
+🎧 **Privacy-First & Portable**: No account creation, no API keys, and no data collection. Works with **Spotify**, **YouTube Music**, **Apple Music**, and browser media players via Windows Media Controls.
 
 🎨 **Fully Customizable**:
-*   **Colors & Fonts**: Change the highlight color, stroke outline, and font family.
-*   **Positioning**: Drag a slider to move the lyrics to the top, bottom, or middle of your screen.
+*   **Typography**: Custom fonts, stroke weights, and highlight colors.
+*   **Layout**: Drag a slider to move the lyrics to the top, bottom, or middle of your screen.
 *   **Animations**: Enable gentle cross-fades for a smoother visual experience.
 *   **Context Lines**: Choose to see previous/next lines or keep it minimal with just the current line.
 
@@ -73,7 +73,9 @@ Look for the **KaraokeBird icon** (green square or bird logo) in your system tra
 *   **Right-click** the icon and select **Settings...** to open the configuration menu.
 *   **Sync Offset**: If lyrics are appearing too early or too late, adjust the offset slider in settings to fix the timing.
 
-# 🛠️ Built With
+# 🛠️ How it Works
+
+Unlike traditional lyrics apps that require a dedicated window, KaraokeBird uses the WinSDK to "listen" to your system's media bus. It then uses the syncedlyrics engine to scrape the most accurate timing data available, rendering it via a high-performance PyQt6 transparent layer.
 
 *   **[PyQt6](https://pypi.org/project/PyQt6/)**: For the robust, transparent GUI and overlay capabilities.
 *   **[winsdk](https://pypi.org/project/winsdk/)**: To interface directly with Windows Media Controls for metadata and timeline tracking.
