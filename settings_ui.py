@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QColorDialog,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -42,6 +43,7 @@ DEFAULT_SETTINGS = {
     "num_future_lines": 1,
     "sync_offset_ms": 0,
     "enable_animations": False,
+    "animation_type": "fade",
     "stroke_enabled_highlight": True,
     "stroke_enabled_context": False,
     "toggle_hotkey": "",
@@ -209,12 +211,25 @@ class SettingsDialog(QDialog):
         )
         color_layout.addRow("Stroke Color:", self.btn_color_stroke)
 
-        self.check_anim = QCheckBox("Smooth Cross-fades")
+        self.check_anim = QCheckBox("Enable Transitions")
         self.check_anim.setChecked(self.temp_settings.get("enable_animations", True))
         self.check_anim.toggled.connect(
             lambda v: self.update_setting("enable_animations", v)
         )
-        color_layout.addRow("Animations:", self.check_anim)
+        color_layout.addRow("Visuals:", self.check_anim)
+        color_layout.addRow(
+            QLabel("<small>Apply smooth motion when the lyric line changes.</small>")
+        )
+
+        self.combo_anim_type = QComboBox()
+        self.combo_anim_type.addItems(["fade", "slide", "zoom"])
+        self.combo_anim_type.setCurrentText(
+            self.temp_settings.get("animation_type", "fade")
+        )
+        self.combo_anim_type.currentTextChanged.connect(
+            lambda v: self.update_setting("animation_type", v)
+        )
+        color_layout.addRow("Effect Style:", self.combo_anim_type)
 
         color_group.setLayout(color_layout)
         layout.addWidget(color_group)
@@ -275,6 +290,11 @@ class SettingsDialog(QDialog):
             lambda v: self.update_setting("num_history_lines", v)
         )
         ctx_layout.addRow("History Lines:", self.spin_history)
+        ctx_layout.addRow(
+            QLabel(
+                "<small>Number of previous lines to keep visible above the current one.</small>"
+            )
+        )
 
         self.spin_future = QSpinBox()
         self.spin_future.setRange(0, 5)
@@ -283,6 +303,11 @@ class SettingsDialog(QDialog):
             lambda v: self.update_setting("num_future_lines", v)
         )
         ctx_layout.addRow("Upcoming Lines:", self.spin_future)
+        ctx_layout.addRow(
+            QLabel(
+                "<small>Number of future lines to show ahead of time below the current one.</small>"
+            )
+        )
 
         ctx_group.setLayout(ctx_layout)
         layout.addWidget(ctx_group)
@@ -369,8 +394,9 @@ class SettingsDialog(QDialog):
         )
         context_color = self.temp_settings["normal_color"]
         stroke_color = self.temp_settings.get("stroke_color", "#000000")
+        anim_type = self.temp_settings.get("animation_type", "fade")
 
-        num_history = self.temp_settings.get("num_history_lines", 1)
+        num_history = self.temp_settings.get("num_history_lines", 0)
         num_future = self.temp_settings.get("num_future_lines", 1)
 
         # Update History Preview
@@ -380,6 +406,7 @@ class SettingsDialog(QDialog):
         self.preview_prev.setStrokeEnabled(
             self.temp_settings.get("stroke_enabled_context", True)
         )
+        self.preview_prev.animation_type = anim_type
         self.preview_prev.setVisible(num_history > 0)
 
         # Update Future Preview
@@ -389,6 +416,7 @@ class SettingsDialog(QDialog):
         self.preview_next.setStrokeEnabled(
             self.temp_settings.get("stroke_enabled_context", True)
         )
+        self.preview_next.animation_type = anim_type
         self.preview_next.setVisible(num_future > 0)
 
         # Update Highlight Preview
@@ -405,6 +433,7 @@ class SettingsDialog(QDialog):
         self.preview_label.setStrokeEnabled(
             self.temp_settings.get("stroke_enabled_highlight", True)
         )
+        self.preview_label.animation_type = anim_type
 
     def update_setting(self, key, value):
         self.temp_settings[key] = value
@@ -445,6 +474,9 @@ class SettingsDialog(QDialog):
             f"background-color: {self.temp_settings['normal_color']}"
         )
         self.check_anim.setChecked(self.temp_settings.get("enable_animations", True))
+        self.combo_anim_type.setCurrentText(
+            self.temp_settings.get("animation_type", "fade")
+        )
 
         # Layout
         self.spin_history.setValue(self.temp_settings.get("num_history_lines", 1))

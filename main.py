@@ -314,6 +314,7 @@ class OverlayWindow(QWidget):
             l.setStrokeColor(self.settings.get("stroke_color", "#000000"))
             l.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
             l.enable_animation = self.settings.get("enable_animations", True)
+            l.animation_type = self.settings.get("animation_type", "fade")
             self.prev_labels.append(l)
             self.main_layout.addWidget(l)
 
@@ -327,6 +328,7 @@ class OverlayWindow(QWidget):
             self.settings.get("stroke_enabled_highlight", True)
         )
         self.curr_label.enable_animation = self.settings.get("enable_animations", True)
+        self.curr_label.animation_type = self.settings.get("animation_type", "fade")
 
         # Shadow effect
         shadow = QGraphicsDropShadowEffect()
@@ -346,6 +348,7 @@ class OverlayWindow(QWidget):
             l.setStrokeColor(self.settings.get("stroke_color", "#000000"))
             l.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
             l.enable_animation = self.settings.get("enable_animations", True)
+            l.animation_type = self.settings.get("animation_type", "fade")
             self.next_labels.append(l)
             self.main_layout.addWidget(l)
 
