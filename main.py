@@ -3,6 +3,7 @@ import os
 import sys
 import time
 
+import keyboard
 import qasync
 import syncedlyrics
 import winsdk.windows.media.control as wmc
@@ -36,8 +37,8 @@ from ui_components import StrokedLabel
 class SpotifyReader(QObject):
     # Signals to update UI from async loop
     track_changed = pyqtSignal(str, str)  # title, artist
-    # is_playing, current_ms, duration_ms
-    playback_sync = pyqtSignal(bool, int, int)
+    # is_playing, current_ms, duration_ms, capture_time_ms
+    playback_sync = pyqtSignal(bool, int, int, float)
     lyrics_found = pyqtSignal(list)  # list of (time_ms, text)
     status_message = pyqtSignal(str)
 
@@ -65,17 +66,45 @@ class SpotifyReader(QObject):
             return
 
         # Get Timeline & Playback Status
-        timeline = self.current_session.get_timeline_properties()
-        playback_info = self.current_session.get_playback_info()
+        try:
+            timeline = self.current_session.get_timeline_properties()
+            playback_info = self.current_session.get_playback_info()
+            # Capture timestamps as close to the call as possible
+            capture_time = time.perf_counter() * 1000
+            sys_now_ms = time.time() * 1000
 
-        if timeline and playback_info:
-            position = timeline.position.total_seconds() * 1000
-            duration = timeline.end_time.total_seconds() * 1000
-            is_playing = (
-                playback_info.playback_status
-                == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
-            )
-            self.playback_sync.emit(is_playing, int(position), int(duration))
+            if timeline and playback_info:
+                raw_position_ms = timeline.position.total_seconds() * 1000
+
+                # Handle varying SMTC timestamp formats
+                try:
+                    last_update_dt = timeline.last_updated_time
+                    if hasattr(last_update_dt, "timestamp"):
+                        last_update_ms = last_update_dt.timestamp() * 1000
+                    else:
+                        last_update_ms = last_update_dt.to_datetime().timestamp() * 1000
+                except (AttributeError, ValueError, Exception):
+                    last_update_ms = sys_now_ms
+
+                elapsed_since_update = sys_now_ms - last_update_ms
+
+                # Apply correction for the time passed since the media player last updated its position.
+                # If the difference is negative or too large, ignore it.
+                if 0 <= elapsed_since_update < 10000:
+                    position = raw_position_ms + elapsed_since_update
+                else:
+                    position = raw_position_ms
+
+                duration = timeline.end_time.total_seconds() * 1000
+                is_playing = (
+                    playback_info.playback_status
+                    == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
+                )
+                self.playback_sync.emit(
+                    is_playing, int(position), int(duration), capture_time
+                )
+        except Exception as e:
+            print(f"Error polling SMTC: {e}")
 
         # Get Metadata (Title/Artist)
         try:
@@ -89,7 +118,6 @@ class SpotifyReader(QObject):
             if track_id != self.current_track_id and title:
                 self.current_track_id = track_id
                 self.track_changed.emit(title, artist)
-                self.status_message.emit(f"Playing: {title}")
 
                 # Fetch lyrics in background
                 asyncio.create_task(self.fetch_lyrics(title, artist))
@@ -137,20 +165,33 @@ class SpotifyReader(QObject):
                     total_ms = int((minutes * 60 + seconds) * 1000)
 
                     lyrics.append({"time": total_ms, "text": text})
-            except Exception:
+            except (ValueError, IndexError):
                 continue
 
         # Sort by time just in case
         lyrics.sort(key=lambda x: x["time"])
-        return lyrics
+
+        if not lyrics:
+            return []
+
+        # Inject "..." for initial song intro if it's long
+        processed_lyrics = []
+        if lyrics[0]["time"] > 8000:
+            processed_lyrics.append({"time": 5000, "text": "..."})
+
+        processed_lyrics.extend(lyrics)
+        return processed_lyrics
 
 
 # --- Frontend GUI ---
 
 
 class OverlayWindow(QWidget):
+    visibility_toggled = pyqtSignal()
+
     def __init__(self, settings_manager):
         super().__init__()
+        self.visibility_toggled.connect(self.toggle_visibility)
         self.settings_manager = settings_manager
         self.settings = self.settings_manager.settings
 
@@ -186,6 +227,7 @@ class OverlayWindow(QWidget):
         self.last_sync_track_time = 0
         self.last_sync_sys_time = 0
         self.duration = 0
+        self.system_message_time = 0
 
         # High-frequency timer for smooth updates
         self.timer = QTimer(self)
@@ -194,6 +236,29 @@ class OverlayWindow(QWidget):
 
         # Apply initial settings
         self.apply_settings()
+        self.update_hotkey()
+
+    def toggle_visibility(self):
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+
+    def update_hotkey(self):
+        try:
+            keyboard.unhook_all()
+            hotkey = self.settings.get("toggle_hotkey", "")
+            if hotkey:
+                # Map Qt key names to keyboard library names
+                hotkey = (
+                    hotkey.replace("Meta", "windows")
+                    .replace("Return", "enter")
+                    .replace("PgUp", "page up")
+                    .replace("PgDown", "page down")
+                )
+                keyboard.add_hotkey(hotkey, self.visibility_toggled.emit)
+        except Exception as e:
+            print(f"Error setting hotkey: {e}")
 
     def apply_settings(self, settings_override=None):
         # Update local settings ref
@@ -203,16 +268,25 @@ class OverlayWindow(QWidget):
             self.settings = self.settings_manager.settings
 
         # 1. Geometry / Position
-        screen = QApplication.primaryScreen().geometry()
+        # Use availableGeometry to respect taskbar and multi-monitor setups
+        screen = QApplication.primaryScreen().availableGeometry()
         width = 1200
         height = 400
-        # Position from bottom based on offset
-        y_pos = screen.height() - self.settings["window_y_offset"] - (height // 2)
-        # Ensure it doesn't go off screen bottom if offset is small
-        if y_pos > screen.height() - height:
-            y_pos = screen.height() - height
 
-        self.setGeometry(screen.width() // 2 - (width // 2), y_pos, width, height)
+        # offset 0 is now exactly the bottom of the available screen area.
+        # max_y is the top-most y coordinate where the window sits at the bottom.
+        max_y = screen.y() + screen.height() - height
+        min_y = screen.y()
+
+        y_pos = max_y - self.settings.get("window_y_offset", 0)
+
+        # Clamp to screen bounds to prevent "unleashed" behavior (going off top)
+        # and to fix the bottom bound not being responsive at low offsets.
+        y_pos = max(min_y, min(y_pos, max_y))
+
+        self.setGeometry(
+            screen.x() + (screen.width() // 2) - (width // 2), y_pos, width, height
+        )
 
         # 2. Rebuild Labels
         # Clear existing widgets from layout
@@ -227,11 +301,12 @@ class OverlayWindow(QWidget):
         self.prev_labels = []
         self.next_labels = []
 
-        num_lines = self.settings["num_preview_lines"]
+        num_history = self.settings.get("num_history_lines", 1)
+        num_future = self.settings.get("num_future_lines", 1)
         font_family = self.settings["font_family"]
 
         # --- Previous Lines ---
-        for _ in range(num_lines):
+        for _ in range(num_history):
             l = StrokedLabel("")
             l.setAlignment(Qt.AlignmentFlag.AlignCenter)
             l.setFont(QFont(font_family, self.settings["font_size_normal"]))
@@ -239,6 +314,7 @@ class OverlayWindow(QWidget):
             l.setStrokeColor(self.settings.get("stroke_color", "#000000"))
             l.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
             l.enable_animation = self.settings.get("enable_animations", True)
+            l.animation_type = self.settings.get("animation_type", "fade")
             self.prev_labels.append(l)
             self.main_layout.addWidget(l)
 
@@ -252,6 +328,7 @@ class OverlayWindow(QWidget):
             self.settings.get("stroke_enabled_highlight", True)
         )
         self.curr_label.enable_animation = self.settings.get("enable_animations", True)
+        self.curr_label.animation_type = self.settings.get("animation_type", "fade")
 
         # Shadow effect
         shadow = QGraphicsDropShadowEffect()
@@ -263,7 +340,7 @@ class OverlayWindow(QWidget):
         self.main_layout.addWidget(self.curr_label)
 
         # --- Next Lines ---
-        for _ in range(num_lines):
+        for _ in range(num_future):
             l = StrokedLabel("")
             l.setAlignment(Qt.AlignmentFlag.AlignCenter)
             l.setFont(QFont(font_family, self.settings["font_size_normal"]))
@@ -271,6 +348,7 @@ class OverlayWindow(QWidget):
             l.setStrokeColor(self.settings.get("stroke_color", "#000000"))
             l.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
             l.enable_animation = self.settings.get("enable_animations", True)
+            l.animation_type = self.settings.get("animation_type", "fade")
             self.next_labels.append(l)
             self.main_layout.addWidget(l)
 
@@ -281,59 +359,70 @@ class OverlayWindow(QWidget):
             self.curr_label.setText(
                 "Waiting for music..." if not self.lyrics_data else "Lyrics loaded!"
             )
+            self.system_message_time = time.time()
+
+        if settings_override is None:
+            self.update_hotkey()
 
     def set_track_info(self, title, artist):
         self.current_title = title
         self.current_artist = artist
-        # Reset lyrics so we show searching status
+        # Reset lyrics and show title immediately
         self.lyrics_data = []
-        self.update_status(f"Searching: {title} - {artist}")
+        self.current_lyric_index = -1
+        self.update_display(-1)
 
     def update_status(self, msg):
         # Since we removed the status label to clean up the look, we might just print to console
         # or temporarily show it on the current line if no lyrics are loaded
         if not self.lyrics_data:
+            self.system_message_time = time.time()
             self.curr_label.setText(msg)
             # Clear context lines when showing status
-            for l in self.prev_labels:
-                l.setText("")
-            for l in self.next_labels:
-                l.setText("")
+            for lbl in self.prev_labels:
+                lbl.setText("")
+            for lbl in self.next_labels:
+                lbl.setText("")
 
     def on_lyrics_found(self, data):
         self.lyrics_data = data
-        self.current_lyric_index = -1
         if not data:
             self.curr_label.setText("No synced lyrics found")
-            for l in self.prev_labels:
-                l.setText("")
-            for l in self.next_labels:
-                l.setText("")
+            for lbl in self.prev_labels:
+                lbl.setText("")
+            for lbl in self.next_labels:
+                lbl.setText("")
         else:
-            # Force an update to show Title/Lyrics loaded immediately
-            self.update_display(-1)
+            # Let update_frame determine the correct starting point
+            # based on current playback position. We force an update by
+            # setting current index to an impossible value.
+            self.current_lyric_index = -999
+            self.update_frame()
 
-    def on_playback_sync(self, is_playing, position, duration):
-        now = time.time() * 1000
-
+    def on_playback_sync(self, is_playing, position, duration, capture_time):
         if self.is_playing and is_playing:
-            # Interpolated time right now
-            expected = self.last_sync_track_time + (now - self.last_sync_sys_time)
+            # Interpolated time at the moment of capture
+            expected = self.last_sync_track_time + (
+                capture_time - self.last_sync_sys_time
+            )
             diff = position - expected
 
-            # STRICT MONOTONIC SYNC:
+            # STRETCHED MONOTONIC SYNC:
             # 1. Large Jump (abs(diff) > 2000ms): Assume Seek/Skip. Snap instantly.
-            # 2. Forward Drift (diff > 0): We are lagging behind Windows. Catch up.
-            # 3. Backward Drift (diff < 0): Windows sent stale time. IGNORE update.
-
-            if abs(diff) > 2000 or diff > 0:
+            if abs(diff) > 2000:
                 self.last_sync_track_time = position
-                self.last_sync_sys_time = now
-            # else: diff < 0 (Stale poll). Do nothing, keep extrapolating from old anchor.
+                self.last_sync_sys_time = capture_time
+            # 2. Forward Drift: If we are behind the music by > 150ms, snap forward.
+            elif diff > 150:
+                self.last_sync_track_time = position
+                self.last_sync_sys_time = capture_time
+            # 3. Backward Drift: If the reported time is behind our expectation,
+            # we ignore it unless it's a huge jump. This prevents "stuttering"
+            # where lyrics jump back and then forward again due to jitter.
         else:
             # Not playing or just starting -> Snap to reported position
             self.last_sync_track_time = position
-            self.last_sync_sys_time = now
+            self.last_sync_sys_time = capture_time
 
         self.is_playing = is_playing
         self.duration = duration
@@ -341,12 +430,19 @@ class OverlayWindow(QWidget):
 
     def update_frame(self):
         if not self.lyrics_data:
+            # Fade out system messages after 5 seconds
+            if (
+                self.system_message_time > 0
+                and time.time() - self.system_message_time > 5
+            ):
+                if self.curr_label.text():
+                    self.curr_label.setText("")
             return
 
         # Calculate interpolated time
         current_time = self.last_sync_track_time
         if self.is_playing:
-            now = time.time() * 1000
+            now = time.perf_counter() * 1000
             delta = now - self.last_sync_sys_time
             current_time += delta
 
@@ -365,42 +461,62 @@ class OverlayWindow(QWidget):
         if active_index != self.current_lyric_index:
             self.current_lyric_index = active_index
             self.update_display(active_index)
+        elif active_index < 0 and self.system_message_time > 0:
+            # Fade out system messages after 5 seconds
+            if time.time() - self.system_message_time > 5:
+                if self.curr_label.text():
+                    self.curr_label.setText("")
 
-    def get_line_text(self, index):
+    def get_line_text(self, index, is_context=False):
+        """
+        is_context=True means this is for a previous/next label.
+        """
         if 0 <= index < len(self.lyrics_data):
             return self.lyrics_data[index]["text"]
-        elif index == -1:
-            return f"Now Playing: {self.current_title}"
+
+        # If it's a context label (prev/next), don't show system messages
+        if is_context:
+            return ""
+
+        # Main label (index < 0) system messages
+        if index == -1:
+            return f"Now Playing: {self.current_title}" if self.current_title else ""
         elif index == -2:
             return "Lyrics loaded!"
-        elif index < -2:
-            return ""
-        else:
-            return ""
+        return ""
 
     def update_display(self, index):
         # index is the index of the CURRENT line in self.lyrics_data
+        if index < 0:
+            self.system_message_time = time.time()
+        else:
+            self.system_message_time = 0
 
         # 1. Update Current
-        self.curr_label.setText(self.get_line_text(index))
+        self.curr_label.setText(self.get_line_text(index, is_context=False))
+
+        # Context labels (previous/next) should be hidden if showing a system message
+        # UNLESS that system message is the "..." gap marker (which has index >= 0)
+        show_context = index >= 0
 
         # 2. Update Previous Labels
-        # self.prev_labels[0] is the top-most (furthest back).
-        # self.prev_labels[-1] is right above current.
         num_prev = len(self.prev_labels)
         for i, lbl in enumerate(self.prev_labels):
-            # i=0 (top) -> if num_prev=2 -> offset = -2
-            # i=1 (bottom) -> if num_prev=2 -> offset = -1
             offset = i - num_prev
             target_idx = index + offset
-            lbl.setText(self.get_line_text(target_idx))
+            text = (
+                self.get_line_text(target_idx, is_context=True) if show_context else ""
+            )
+            lbl.setText(text)
 
         # 3. Update Next Labels
-        # self.next_labels[0] is right below current.
         for i, lbl in enumerate(self.next_labels):
             offset = i + 1
             target_idx = index + offset
-            lbl.setText(self.get_line_text(target_idx))
+            text = (
+                self.get_line_text(target_idx, is_context=True) if show_context else ""
+            )
+            lbl.setText(text)
 
 
 # --- Main Entry ---
@@ -410,7 +526,7 @@ async def main_loop(reader):
     await reader.setup()
     while True:
         await reader.poll_status()
-        await asyncio.sleep(0.5)  # Poll frequency
+        await asyncio.sleep(0.2)  # Higher poll frequency (5Hz)
 
 
 def resource_path(relative_path):
@@ -447,6 +563,11 @@ def create_tray_icon(app, window, settings_manager):
     title_action.setEnabled(False)
     menu.addAction(title_action)
     menu.addSeparator()
+
+    # Toggle Visibility
+    action_toggle = QAction("Show/Hide Overlay", app)
+    action_toggle.triggered.connect(window.toggle_visibility)
+    menu.addAction(action_toggle)
 
     # Settings Action
     action_settings = QAction("Settings...", app)

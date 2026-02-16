@@ -36,6 +36,10 @@ KaraokeBird is designed to be seamless and unobtrusive.
 
 ⚡ **Instant Setup**: No logins, no API keys, and no complex configuration required. Just run and sing.
 
+# 🎥 Demo
+
+See it in action: [Watch the demo on X / Twitter](https://twitter.com/joshshiman/status/2011283617134329988)
+
 # 💻 Installation & Usage
 
 ### Prerequisites
