@@ -88,18 +88,22 @@ class SpotifyReader(QObject):
 
                 elapsed_since_update = sys_now_ms - last_update_ms
 
-                # Apply correction for the time passed since the media player last updated its position.
-                # If the difference is negative or too large, ignore it.
-                if 0 <= elapsed_since_update < 10000:
+                # Determine playback state before applying the elapsed correction.
+                is_playing = (
+                    playback_info.playback_status
+                    == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
+                )
+
+                # Apply correction for the time passed since the media player last updated
+                # its position. Only correct when actually playing — when paused, the raw
+                # position is already the correct frozen value and adding elapsed time would
+                # cause the lyrics to drift forward while the song is stopped.
+                if is_playing and 0 <= elapsed_since_update < 10000:
                     position = raw_position_ms + elapsed_since_update
                 else:
                     position = raw_position_ms
 
                 duration = timeline.end_time.total_seconds() * 1000
-                is_playing = (
-                    playback_info.playback_status
-                    == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
-                )
                 self.playback_sync.emit(
                     is_playing, int(position), int(duration), capture_time
                 )
