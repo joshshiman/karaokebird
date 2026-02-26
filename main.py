@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 import time
+import webbrowser
 
 import keyboard
 import qasync
@@ -597,6 +598,13 @@ def create_tray_icon(app, window, settings_manager):
 
     action_settings.triggered.connect(show_settings)
     menu.addAction(action_settings)
+
+    # Check for Updates
+    action_updates = QAction("Check for Updates...", app)
+    action_updates.triggered.connect(
+        lambda: webbrowser.open("https://github.com/joshshiman/karaokebird/releases")
+    )
+    menu.addAction(action_updates)
 
     menu.addSeparator()
 
