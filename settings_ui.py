@@ -32,11 +32,56 @@ SETTINGS_FILE = "settings.json"
 
 OVERLAY_WIDTH = 1200
 OVERLAY_HEIGHT = 400
-TRACK_INFO_WIDTH = 1200
+
+
+def clamp(value, min_value, max_value):
+    return max(min_value, min(value, max_value))
 
 
 def get_track_info_height(font_size):
     return max(60, int(font_size * 3))
+
+
+def get_track_info_width(screen_width):
+    return min(screen_width, max(OVERLAY_WIDTH, int(screen_width * 0.9)))
+
+
+def get_track_info_gap(font_size):
+    return max(6, int(font_size * 0.5))
+
+
+def compute_overlay_geometry(settings, screen_geom):
+    width = OVERLAY_WIDTH
+    height = OVERLAY_HEIGHT
+
+    extra_y = height // 2
+    min_y_offset = -extra_y
+    max_y_offset = screen_geom.height() - height + extra_y
+    y_offset = clamp(settings.get("window_y_offset", 0), min_y_offset, max_y_offset)
+    base_y = screen_geom.y() + (screen_geom.height() - height)
+    y_pos = base_y - y_offset
+
+    max_x_offset = max(0, (screen_geom.width() - width) // 2)
+    x_offset = clamp(settings.get("window_x_offset", 0), -max_x_offset, max_x_offset)
+
+    center_x = screen_geom.x() + (screen_geom.width() - width) // 2
+    x_pos = center_x + x_offset
+
+    min_x = screen_geom.x()
+    max_x = screen_geom.x() + screen_geom.width() - width
+    if max_x < min_x:
+        x_pos = center_x
+    else:
+        x_pos = clamp(x_pos, min_x, max_x)
+
+    return {
+        "x": x_pos,
+        "y": y_pos,
+        "width": width,
+        "height": height,
+        "min_y_offset": min_y_offset,
+        "max_y_offset": max_y_offset,
+    }
 
 
 DEFAULT_SETTINGS = {
@@ -426,7 +471,7 @@ class SettingsDialog(QDialog):
         track_layout.addLayout(track_y_layout)
 
         track_layout.addWidget(
-            QLabel("<small>Offsets are relative to screen center.</small>")
+            QLabel("<small>Offsets are relative to the lyrics overlay.</small>")
         )
 
         track_group.setLayout(track_layout)
@@ -643,18 +688,16 @@ class SettingsDialog(QDialog):
             return
 
         screen_geom = self.get_selected_screen_geometry()
-        extra_y = OVERLAY_HEIGHT // 2
-        min_y_offset = -extra_y
-        max_y_offset = screen_geom.height() - OVERLAY_HEIGHT + extra_y
+        overlay_geom = compute_overlay_geometry(self.temp_settings, screen_geom)
+        min_y_offset = overlay_geom["min_y_offset"]
+        max_y_offset = overlay_geom["max_y_offset"]
         max_x_offset = max(0, (screen_geom.width() - OVERLAY_WIDTH) // 2)
 
-        y_value = min(
-            max(self.temp_settings.get("window_y_offset", 0), min_y_offset),
-            max_y_offset,
+        y_value = clamp(
+            self.temp_settings.get("window_y_offset", 0), min_y_offset, max_y_offset
         )
-        x_value = min(
-            max(self.temp_settings.get("window_x_offset", 0), -max_x_offset),
-            max_x_offset,
+        x_value = clamp(
+            self.temp_settings.get("window_x_offset", 0), -max_x_offset, max_x_offset
         )
 
         self.slider_offset_y.blockSignals(True)
@@ -680,18 +723,29 @@ class SettingsDialog(QDialog):
         self.temp_settings["window_y_offset"] = y_value
         self.temp_settings["window_x_offset"] = x_value
 
-        track_height = get_track_info_height(
-            self.temp_settings.get("font_size_normal", 14)
-        )
-        max_track_x = max(0, (screen_geom.width() - TRACK_INFO_WIDTH) // 2)
-        max_track_y = max(0, (screen_geom.height() - track_height) // 2)
+        font_size = self.temp_settings.get("font_size_normal", 14)
+        track_height = get_track_info_height(font_size)
+        track_width = get_track_info_width(screen_geom.width())
+        track_gap = get_track_info_gap(font_size)
 
-        track_x_value = min(
-            max(self.temp_settings.get("track_info_x_offset", 0), -max_track_x),
+        base_x = overlay_geom["x"] + (overlay_geom["width"] - track_width) // 2
+        base_y = (
+            overlay_geom["y"] + (overlay_geom["height"] // 2) - track_height - track_gap
+        )
+
+        min_track_x = screen_geom.x() - base_x
+        max_track_x = screen_geom.x() + screen_geom.width() - track_width - base_x
+        min_track_y = screen_geom.y() - base_y
+        max_track_y = screen_geom.y() + screen_geom.height() - track_height - base_y
+
+        track_x_value = clamp(
+            self.temp_settings.get("track_info_x_offset", 0),
+            min_track_x,
             max_track_x,
         )
-        track_y_value = min(
-            max(self.temp_settings.get("track_info_y_offset", 0), -max_track_y),
+        track_y_value = clamp(
+            self.temp_settings.get("track_info_y_offset", 0),
+            min_track_y,
             max_track_y,
         )
 
@@ -700,10 +754,10 @@ class SettingsDialog(QDialog):
         self.slider_track_y.blockSignals(True)
         self.spin_track_y.blockSignals(True)
 
-        self.slider_track_x.setRange(-max_track_x, max_track_x)
-        self.spin_track_x.setRange(-max_track_x, max_track_x)
-        self.slider_track_y.setRange(-max_track_y, max_track_y)
-        self.spin_track_y.setRange(-max_track_y, max_track_y)
+        self.slider_track_x.setRange(min_track_x, max_track_x)
+        self.spin_track_x.setRange(min_track_x, max_track_x)
+        self.slider_track_y.setRange(min_track_y, max_track_y)
+        self.spin_track_y.setRange(min_track_y, max_track_y)
 
         self.slider_track_x.setValue(track_x_value)
         self.spin_track_x.setValue(track_x_value)

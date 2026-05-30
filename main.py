@@ -30,12 +30,12 @@ from PyQt6.QtWidgets import (
 )
 
 from settings_ui import (
-    OVERLAY_HEIGHT,
-    OVERLAY_WIDTH,
-    TRACK_INFO_WIDTH,
     SettingsDialog,
     SettingsManager,
+    compute_overlay_geometry,
+    get_track_info_gap,
     get_track_info_height,
+    get_track_info_width,
 )
 from ui_components import StrokedLabel
 
@@ -292,32 +292,13 @@ class OverlayWindow(QWidget):
         # 1. Geometry / Position
         screen = get_target_screen(self.settings)
         screen_geom = screen.geometry()
-        width = OVERLAY_WIDTH
-        height = OVERLAY_HEIGHT
-
-        extra_y = height // 2
-        min_y_offset = -extra_y
-        max_y_offset = screen_geom.height() - height + extra_y
-        y_offset = self.settings.get("window_y_offset", 0)
-        y_offset = max(min_y_offset, min(y_offset, max_y_offset))
-        base_y = screen_geom.y() + (screen_geom.height() - height)
-        y_pos = base_y - y_offset
-
-        max_x_offset = max(0, (screen_geom.width() - width) // 2)
-        x_offset = self.settings.get("window_x_offset", 0)
-        x_offset = max(-max_x_offset, min(x_offset, max_x_offset))
-
-        center_x = screen_geom.x() + (screen_geom.width() - width) // 2
-        x_pos = center_x + x_offset
-
-        min_x = screen_geom.x()
-        max_x = screen_geom.x() + screen_geom.width() - width
-        if max_x < min_x:
-            x_pos = center_x
-        else:
-            x_pos = max(min_x, min(x_pos, max_x))
-
-        self.setGeometry(x_pos, y_pos, width, height)
+        overlay_geom = compute_overlay_geometry(self.settings, screen_geom)
+        self.setGeometry(
+            overlay_geom["x"],
+            overlay_geom["y"],
+            overlay_geom["width"],
+            overlay_geom["height"],
+        )
 
         # 2. Rebuild Labels
         # Clear existing widgets from layout
@@ -620,39 +601,35 @@ class TrackInfoWindow(QWidget):
         self.label.setStrokeColor(self.settings.get("stroke_color", "#000000"))
         self.label.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
 
-        width = TRACK_INFO_WIDTH
-        height = get_track_info_height(font_size)
-
         screen = get_target_screen(self.settings)
         screen_geom = screen.geometry()
+        overlay_geom = compute_overlay_geometry(self.settings, screen_geom)
 
-        max_x_offset = max(0, (screen_geom.width() - width) // 2)
-        max_y_offset = max(0, (screen_geom.height() - height) // 2)
+        width = get_track_info_width(screen_geom.width())
+        height = get_track_info_height(font_size)
+        gap = get_track_info_gap(font_size)
 
-        x_offset = self.settings.get("track_info_x_offset", 0)
-        x_offset = max(-max_x_offset, min(x_offset, max_x_offset))
-        y_offset = self.settings.get("track_info_y_offset", 0)
-        y_offset = max(-max_y_offset, min(y_offset, max_y_offset))
-
-        center_x = screen_geom.x() + (screen_geom.width() - width) // 2
-        center_y = screen_geom.y() + (screen_geom.height() - height) // 2
-        x_pos = center_x + x_offset
-        y_pos = center_y + y_offset
+        base_x = overlay_geom["x"] + (overlay_geom["width"] - width) // 2
+        base_y = overlay_geom["y"] + (overlay_geom["height"] // 2) - height - gap
 
         min_x = screen_geom.x()
         max_x = screen_geom.x() + screen_geom.width() - width
         min_y = screen_geom.y()
         max_y = screen_geom.y() + screen_geom.height() - height
 
-        if max_x < min_x:
-            x_pos = center_x
-        else:
-            x_pos = max(min_x, min(x_pos, max_x))
+        x_offset = self.settings.get("track_info_x_offset", 0)
+        y_offset = self.settings.get("track_info_y_offset", 0)
 
-        if max_y < min_y:
-            y_pos = center_y
-        else:
-            y_pos = max(min_y, min(y_pos, max_y))
+        min_x_offset = min_x - base_x
+        max_x_offset = max_x - base_x
+        min_y_offset = min_y - base_y
+        max_y_offset = max_y - base_y
+
+        x_offset = max(min_x_offset, min(x_offset, max_x_offset))
+        y_offset = max(min_y_offset, min(y_offset, max_y_offset))
+
+        x_pos = base_x + x_offset
+        y_pos = base_y + y_offset
 
         self.setGeometry(x_pos, y_pos, width, height)
         self.update_text()
