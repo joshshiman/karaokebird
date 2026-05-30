@@ -3,10 +3,123 @@ from PyQt6.QtCore import (
     QParallelAnimationGroup,
     QPropertyAnimation,
     Qt,
+    QTimer,
     pyqtProperty,
 )
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QLabel
+
+
+class MarqueeLabel(QLabel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.stroke_color = QColor("#000000")
+        self.stroke_width = 3
+        self.stroke_enabled = True
+
+        self.scroll_enabled = True
+        self.scroll_speed = 40.0  # pixels per second
+        self.scroll_gap = 40
+        self._scroll_offset = 0.0
+        self._text_width = 0
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._advance_scroll)
+        self._timer.start(30)
+
+    def setStrokeColor(self, color):
+        self.stroke_color = QColor(color)
+
+    def setStrokeEnabled(self, enabled):
+        self.stroke_enabled = enabled
+        self.update()
+
+    def setScrollEnabled(self, enabled):
+        self.scroll_enabled = enabled
+        if not enabled:
+            self._scroll_offset = 0.0
+        self.update()
+
+    def setScrollSpeed(self, speed):
+        self.scroll_speed = max(1.0, float(speed))
+
+    def setText(self, text):
+        super().setText(text)
+        self._update_metrics()
+        self._scroll_offset = 0.0
+        self.update()
+
+    def setFont(self, font):
+        super().setFont(font)
+        self._update_metrics()
+        self.update()
+
+    def resizeEvent(self, event):
+        self._update_metrics()
+        super().resizeEvent(event)
+
+    def _update_metrics(self):
+        if not self.text():
+            self._text_width = 0
+            return
+        self._text_width = self.fontMetrics().horizontalAdvance(self.text())
+
+    def _should_scroll(self):
+        return self.scroll_enabled and self._text_width > self.width()
+
+    def _advance_scroll(self):
+        if not self._should_scroll():
+            if self._scroll_offset != 0.0:
+                self._scroll_offset = 0.0
+                self.update()
+            return
+
+        step = self.scroll_speed * (self._timer.interval() / 1000.0)
+        self._scroll_offset += step
+        total = self._text_width + self.scroll_gap
+        if total > 0 and self._scroll_offset >= total:
+            self._scroll_offset -= total
+        self.update()
+
+    def paintEvent(self, event):
+        if not self.text():
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        metrics = self.fontMetrics()
+        text = self.text()
+        tw = self._text_width or metrics.horizontalAdvance(text)
+        th = metrics.ascent()
+        y = (self.height() + th - metrics.descent()) / 2
+
+        if not self._should_scroll():
+            x = (self.width() - tw) / 2
+            self._draw_text(painter, x, y, text)
+            return
+
+        x = self.width() - self._scroll_offset
+        step = tw + self.scroll_gap
+        while x < self.width():
+            self._draw_text(painter, x, y, text)
+            x += step
+
+    def _draw_text(self, painter, x, y, text):
+        path = QPainterPath()
+        path.addText(x, y, self.font(), text)
+
+        if self.stroke_enabled:
+            pen = QPen(self.stroke_color)
+            pen.setWidth(self.stroke_width)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(path)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self.palette().text())
+        painter.drawPath(path)
 
 
 class StrokedLabel(QLabel):

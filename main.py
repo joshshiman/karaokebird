@@ -37,7 +37,7 @@ from settings_ui import (
     get_track_info_height,
     get_track_info_width,
 )
-from ui_components import StrokedLabel
+from ui_components import MarqueeLabel, StrokedLabel
 
 # --- Backend Logic ---
 
@@ -554,9 +554,10 @@ class TrackInfoWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        self.label = StrokedLabel("")
+        self.label = MarqueeLabel("")
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label.setWordWrap(True)
+        self.label.setWordWrap(False)
+        self.label.setScrollSpeed(45)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
