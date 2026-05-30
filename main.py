@@ -29,7 +29,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from settings_ui import SettingsDialog, SettingsManager
+from settings_ui import (
+    OVERLAY_HEIGHT,
+    OVERLAY_WIDTH,
+    TRACK_INFO_WIDTH,
+    SettingsDialog,
+    SettingsManager,
+    get_track_info_height,
+)
 from ui_components import StrokedLabel
 
 # --- Backend Logic ---
@@ -191,8 +198,17 @@ class SpotifyReader(QObject):
 # --- Frontend GUI ---
 
 
+def get_target_screen(settings):
+    screens = QApplication.screens()
+    screen_index = settings.get("screen_index", 0)
+    if 0 <= screen_index < len(screens):
+        return screens[screen_index]
+    return QApplication.primaryScreen()
+
+
 class OverlayWindow(QWidget):
     visibility_toggled = pyqtSignal()
+    visibility_changed = pyqtSignal(bool)
 
     def __init__(self, settings_manager):
         super().__init__()
@@ -248,6 +264,7 @@ class OverlayWindow(QWidget):
             self.hide()
         else:
             self.show()
+        self.visibility_changed.emit(self.isVisible())
 
     def update_hotkey(self):
         try:
@@ -273,25 +290,34 @@ class OverlayWindow(QWidget):
             self.settings = self.settings_manager.settings
 
         # 1. Geometry / Position
-        # Use availableGeometry to respect taskbar and multi-monitor setups
-        screen = QApplication.primaryScreen().availableGeometry()
-        width = 1200
-        height = 400
+        screen = get_target_screen(self.settings)
+        screen_geom = screen.geometry()
+        width = OVERLAY_WIDTH
+        height = OVERLAY_HEIGHT
 
-        # offset 0 is now exactly the bottom of the available screen area.
-        # max_y is the top-most y coordinate where the window sits at the bottom.
-        max_y = screen.y() + screen.height() - height
-        min_y = screen.y()
+        extra_y = height // 2
+        min_y_offset = -extra_y
+        max_y_offset = screen_geom.height() - height + extra_y
+        y_offset = self.settings.get("window_y_offset", 0)
+        y_offset = max(min_y_offset, min(y_offset, max_y_offset))
+        base_y = screen_geom.y() + (screen_geom.height() - height)
+        y_pos = base_y - y_offset
 
-        y_pos = max_y - self.settings.get("window_y_offset", 0)
+        max_x_offset = max(0, (screen_geom.width() - width) // 2)
+        x_offset = self.settings.get("window_x_offset", 0)
+        x_offset = max(-max_x_offset, min(x_offset, max_x_offset))
 
-        # Clamp to screen bounds to prevent "unleashed" behavior (going off top)
-        # and to fix the bottom bound not being responsive at low offsets.
-        y_pos = max(min_y, min(y_pos, max_y))
+        center_x = screen_geom.x() + (screen_geom.width() - width) // 2
+        x_pos = center_x + x_offset
 
-        self.setGeometry(
-            screen.x() + (screen.width() // 2) - (width // 2), y_pos, width, height
-        )
+        min_x = screen_geom.x()
+        max_x = screen_geom.x() + screen_geom.width() - width
+        if max_x < min_x:
+            x_pos = center_x
+        else:
+            x_pos = max(min_x, min(x_pos, max_x))
+
+        self.setGeometry(x_pos, y_pos, width, height)
 
         # 2. Rebuild Labels
         # Clear existing widgets from layout
@@ -485,7 +511,13 @@ class OverlayWindow(QWidget):
 
         # Main label (index < 0) system messages
         if index == -1:
-            return f"Now Playing: {self.current_title}" if self.current_title else ""
+            if self.settings.get("track_info_enabled", False):
+                return ""
+            if not self.current_title:
+                return ""
+            if self.current_artist:
+                return f"Now Playing: {self.current_title} — {self.current_artist}"
+            return f"Now Playing: {self.current_title}"
         elif index == -2:
             return "Lyrics loaded!"
         return ""
@@ -524,6 +556,109 @@ class OverlayWindow(QWidget):
             lbl.setText(text)
 
 
+class TrackInfoWindow(QWidget):
+    def __init__(self, settings_manager):
+        super().__init__()
+        self.settings_manager = settings_manager
+        self.settings = self.settings_manager.settings
+        self.current_title = ""
+        self.current_artist = ""
+        self.overlay_visible = True
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowTransparentForInput
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self.label = StrokedLabel("")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setWordWrap(True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.label)
+        self.setLayout(layout)
+
+        self.apply_settings()
+
+    def set_track_info(self, title, artist):
+        self.current_title = title
+        self.current_artist = artist
+        self.update_text()
+
+    def update_text(self):
+        if self.current_title and self.current_artist:
+            text = f"{self.current_title} — {self.current_artist}"
+        else:
+            text = self.current_title or ""
+        self.label.setText(text)
+
+    def update_visibility(self, overlay_visible):
+        self.overlay_visible = overlay_visible
+        if overlay_visible and self.settings.get("track_info_enabled", False):
+            self.show()
+        else:
+            self.hide()
+
+    def apply_settings(self, settings_override=None, overlay_visible=None):
+        if settings_override:
+            self.settings = settings_override
+        else:
+            self.settings = self.settings_manager.settings
+
+        if overlay_visible is not None:
+            self.overlay_visible = overlay_visible
+
+        font_family = self.settings.get("font_family", "Century Gothic")
+        font_size = self.settings.get("font_size_normal", 14)
+        self.label.setFont(QFont(font_family, font_size))
+        self.label.setStyleSheet(f"color: {self.settings['normal_color']};")
+        self.label.setStrokeColor(self.settings.get("stroke_color", "#000000"))
+        self.label.setStrokeEnabled(self.settings.get("stroke_enabled_context", True))
+
+        width = TRACK_INFO_WIDTH
+        height = get_track_info_height(font_size)
+
+        screen = get_target_screen(self.settings)
+        screen_geom = screen.geometry()
+
+        max_x_offset = max(0, (screen_geom.width() - width) // 2)
+        max_y_offset = max(0, (screen_geom.height() - height) // 2)
+
+        x_offset = self.settings.get("track_info_x_offset", 0)
+        x_offset = max(-max_x_offset, min(x_offset, max_x_offset))
+        y_offset = self.settings.get("track_info_y_offset", 0)
+        y_offset = max(-max_y_offset, min(y_offset, max_y_offset))
+
+        center_x = screen_geom.x() + (screen_geom.width() - width) // 2
+        center_y = screen_geom.y() + (screen_geom.height() - height) // 2
+        x_pos = center_x + x_offset
+        y_pos = center_y + y_offset
+
+        min_x = screen_geom.x()
+        max_x = screen_geom.x() + screen_geom.width() - width
+        min_y = screen_geom.y()
+        max_y = screen_geom.y() + screen_geom.height() - height
+
+        if max_x < min_x:
+            x_pos = center_x
+        else:
+            x_pos = max(min_x, min(x_pos, max_x))
+
+        if max_y < min_y:
+            y_pos = center_y
+        else:
+            y_pos = max(min_y, min(y_pos, max_y))
+
+        self.setGeometry(x_pos, y_pos, width, height)
+        self.update_text()
+        self.update_visibility(self.overlay_visible)
+
+
 # --- Main Entry ---
 
 
@@ -545,7 +680,7 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-def create_tray_icon(app, window, settings_manager):
+def create_tray_icon(app, window, settings_manager, track_info_window=None):
     tray = QSystemTrayIcon(app)
 
     # Check for custom logo
@@ -586,15 +721,27 @@ def create_tray_icon(app, window, settings_manager):
         def live_update_proxy():
             original_update_preview()
             window.apply_settings(settings_override=dlg.temp_settings)
+            if track_info_window:
+                track_info_window.apply_settings(
+                    settings_override=dlg.temp_settings,
+                    overlay_visible=window.isVisible(),
+                )
 
         dlg.update_preview = live_update_proxy
 
         # When settings are accepted/changed (Save), update the overlay permanently
-        dlg.settings_changed.connect(lambda s: window.apply_settings())
+        def apply_saved_settings():
+            window.apply_settings()
+            if track_info_window:
+                track_info_window.apply_settings(overlay_visible=window.isVisible())
+
+        dlg.settings_changed.connect(lambda s: apply_saved_settings())
 
         if not dlg.exec():
             # If Cancelled, revert to original settings
             window.apply_settings()
+            if track_info_window:
+                track_info_window.apply_settings(overlay_visible=window.isVisible())
 
     action_settings.triggered.connect(show_settings)
     menu.addAction(action_settings)
@@ -630,14 +777,19 @@ def main():
     window = OverlayWindow(settings_manager)
     window.show()
 
+    track_info_window = TrackInfoWindow(settings_manager)
+    window.visibility_changed.connect(track_info_window.update_visibility)
+    track_info_window.update_visibility(window.isVisible())
+
     # Create tray icon
-    tray = create_tray_icon(app, window, settings_manager)
+    tray = create_tray_icon(app, window, settings_manager, track_info_window)
 
     reader = SpotifyReader()
 
     # Connect signals
     reader.status_message.connect(window.update_status)
     reader.track_changed.connect(window.set_track_info)
+    reader.track_changed.connect(track_info_window.set_track_info)
     reader.lyrics_found.connect(window.on_lyrics_found)
     reader.playback_sync.connect(window.on_playback_sync)
 

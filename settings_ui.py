@@ -30,6 +30,15 @@ from ui_components import StrokedLabel
 
 SETTINGS_FILE = "settings.json"
 
+OVERLAY_WIDTH = 1200
+OVERLAY_HEIGHT = 400
+TRACK_INFO_WIDTH = 1200
+
+
+def get_track_info_height(font_size):
+    return max(60, int(font_size * 3))
+
+
 DEFAULT_SETTINGS = {
     "highlight_color": "#ffff00",
     "stroke_color": "#000000",
@@ -39,6 +48,8 @@ DEFAULT_SETTINGS = {
     "font_size_highlight": 24,
     "font_size_normal": 14,
     "window_y_offset": 0,
+    "window_x_offset": 0,
+    "screen_index": 0,
     "num_history_lines": 0,
     "num_future_lines": 1,
     "sync_offset_ms": 0,
@@ -47,6 +58,9 @@ DEFAULT_SETTINGS = {
     "stroke_enabled_highlight": True,
     "stroke_enabled_context": False,
     "toggle_hotkey": "",
+    "track_info_enabled": False,
+    "track_info_x_offset": 0,
+    "track_info_y_offset": 0,
 }
 
 
@@ -245,37 +259,79 @@ class SettingsDialog(QDialog):
         pos_group = QGroupBox("Screen Position")
         pos_layout = QVBoxLayout()
 
-        # Get screen height to bound the slider dynamically
-        screen = QApplication.primaryScreen().availableGeometry()
-        max_height = screen.height()
+        screen_layout = QFormLayout()
+        self.screen_combo = QComboBox()
+        screens = QApplication.screens()
+        for i, screen in enumerate(screens):
+            geometry = screen.geometry()
+            name = screen.name() or f"Display {i + 1}"
+            self.screen_combo.addItem(
+                f"{name} ({geometry.width()}x{geometry.height()})", i
+            )
 
-        h_layout = QHBoxLayout()
-        self.slider_offset = QSlider(Qt.Orientation.Horizontal)
-        self.slider_offset.setRange(0, max_height)
-        self.slider_offset.setValue(self.temp_settings["window_y_offset"])
-        self.slider_offset.valueChanged.connect(
+        screen_index = self.temp_settings.get("screen_index", 0)
+        if 0 <= screen_index < self.screen_combo.count():
+            self.screen_combo.setCurrentIndex(screen_index)
+        self.screen_combo.currentIndexChanged.connect(self.update_screen_selection)
+        screen_layout.addRow("Display:", self.screen_combo)
+        pos_layout.addLayout(screen_layout)
+
+        # Vertical Position
+        y_layout = QHBoxLayout()
+        self.slider_offset_y = QSlider(Qt.Orientation.Horizontal)
+        self.slider_offset_y.setValue(self.temp_settings["window_y_offset"])
+        self.slider_offset_y.valueChanged.connect(
             lambda v: self.update_setting("window_y_offset", v)
         )
 
-        self.spin_offset = QSpinBox()
-        self.spin_offset.setRange(0, max_height)
-        self.spin_offset.setValue(self.temp_settings["window_y_offset"])
-        self.spin_offset.valueChanged.connect(
+        self.spin_offset_y = QSpinBox()
+        self.spin_offset_y.setValue(self.temp_settings["window_y_offset"])
+        self.spin_offset_y.valueChanged.connect(
             lambda v: self.update_setting("window_y_offset", v)
         )
 
-        self.slider_offset.valueChanged.connect(self.spin_offset.setValue)
-        self.spin_offset.valueChanged.connect(self.slider_offset.setValue)
+        self.slider_offset_y.valueChanged.connect(self.spin_offset_y.setValue)
+        self.spin_offset_y.valueChanged.connect(self.slider_offset_y.setValue)
 
-        h_layout.addWidget(QLabel("Screen Bottom"))
-        h_layout.addWidget(self.slider_offset)
-        h_layout.addWidget(QLabel("Screen Top"))
-        h_layout.addWidget(self.spin_offset)
+        y_layout.addWidget(QLabel("Screen Bottom"))
+        y_layout.addWidget(self.slider_offset_y)
+        y_layout.addWidget(QLabel("Screen Top"))
+        y_layout.addWidget(self.spin_offset_y)
 
-        pos_layout.addLayout(h_layout)
+        pos_layout.addLayout(y_layout)
         pos_layout.addWidget(
-            QLabel("<small>Adjust the vertical height of the lyrics overlay.</small>")
+            QLabel(
+                "<small>Adjust the vertical height. Negative values push lower.</small>"
+            )
         )
+
+        # Horizontal Position
+        x_layout = QHBoxLayout()
+        self.slider_offset_x = QSlider(Qt.Orientation.Horizontal)
+        self.slider_offset_x.setValue(self.temp_settings.get("window_x_offset", 0))
+        self.slider_offset_x.valueChanged.connect(
+            lambda v: self.update_setting("window_x_offset", v)
+        )
+
+        self.spin_offset_x = QSpinBox()
+        self.spin_offset_x.setValue(self.temp_settings.get("window_x_offset", 0))
+        self.spin_offset_x.valueChanged.connect(
+            lambda v: self.update_setting("window_x_offset", v)
+        )
+
+        self.slider_offset_x.valueChanged.connect(self.spin_offset_x.setValue)
+        self.spin_offset_x.valueChanged.connect(self.slider_offset_x.setValue)
+
+        x_layout.addWidget(QLabel("Screen Left"))
+        x_layout.addWidget(self.slider_offset_x)
+        x_layout.addWidget(QLabel("Screen Right"))
+        x_layout.addWidget(self.spin_offset_x)
+
+        pos_layout.addLayout(x_layout)
+        pos_layout.addWidget(
+            QLabel("<small>Adjust the horizontal position. 0 = center.</small>")
+        )
+
         pos_group.setLayout(pos_layout)
         layout.addWidget(pos_group)
 
@@ -311,6 +367,70 @@ class SettingsDialog(QDialog):
 
         ctx_group.setLayout(ctx_layout)
         layout.addWidget(ctx_group)
+
+        # Track Info Group
+        track_group = QGroupBox("Track Info")
+        track_layout = QVBoxLayout()
+
+        self.check_track_info = QCheckBox("Show song and artist permanently")
+        self.check_track_info.setChecked(
+            self.temp_settings.get("track_info_enabled", False)
+        )
+        self.check_track_info.toggled.connect(
+            lambda v: self.update_setting("track_info_enabled", v)
+        )
+        track_layout.addWidget(self.check_track_info)
+
+        track_x_layout = QHBoxLayout()
+        self.slider_track_x = QSlider(Qt.Orientation.Horizontal)
+        self.slider_track_x.setValue(self.temp_settings.get("track_info_x_offset", 0))
+        self.slider_track_x.valueChanged.connect(
+            lambda v: self.update_setting("track_info_x_offset", v)
+        )
+
+        self.spin_track_x = QSpinBox()
+        self.spin_track_x.setValue(self.temp_settings.get("track_info_x_offset", 0))
+        self.spin_track_x.valueChanged.connect(
+            lambda v: self.update_setting("track_info_x_offset", v)
+        )
+
+        self.slider_track_x.valueChanged.connect(self.spin_track_x.setValue)
+        self.spin_track_x.valueChanged.connect(self.slider_track_x.setValue)
+
+        track_x_layout.addWidget(QLabel("Left"))
+        track_x_layout.addWidget(self.slider_track_x)
+        track_x_layout.addWidget(QLabel("Right"))
+        track_x_layout.addWidget(self.spin_track_x)
+        track_layout.addLayout(track_x_layout)
+
+        track_y_layout = QHBoxLayout()
+        self.slider_track_y = QSlider(Qt.Orientation.Horizontal)
+        self.slider_track_y.setValue(self.temp_settings.get("track_info_y_offset", 0))
+        self.slider_track_y.valueChanged.connect(
+            lambda v: self.update_setting("track_info_y_offset", v)
+        )
+
+        self.spin_track_y = QSpinBox()
+        self.spin_track_y.setValue(self.temp_settings.get("track_info_y_offset", 0))
+        self.spin_track_y.valueChanged.connect(
+            lambda v: self.update_setting("track_info_y_offset", v)
+        )
+
+        self.slider_track_y.valueChanged.connect(self.spin_track_y.setValue)
+        self.spin_track_y.valueChanged.connect(self.slider_track_y.setValue)
+
+        track_y_layout.addWidget(QLabel("Top"))
+        track_y_layout.addWidget(self.slider_track_y)
+        track_y_layout.addWidget(QLabel("Bottom"))
+        track_y_layout.addWidget(self.spin_track_y)
+        track_layout.addLayout(track_y_layout)
+
+        track_layout.addWidget(
+            QLabel("<small>Offsets are relative to screen center.</small>")
+        )
+
+        track_group.setLayout(track_layout)
+        layout.addWidget(track_group)
 
         # Stroke Toggle Group
         stroke_group = QGroupBox("Stroke/Outline Toggles")
@@ -389,6 +509,7 @@ class SettingsDialog(QDialog):
         return widget
 
     def update_preview(self):
+        self.update_position_bounds()
         context_font = QFont(
             self.temp_settings["font_family"], self.temp_settings["font_size_normal"]
         )
@@ -487,7 +608,17 @@ class SettingsDialog(QDialog):
         self.check_stroke_context.setChecked(
             self.temp_settings.get("stroke_enabled_context", True)
         )
-        self.slider_offset.setValue(self.temp_settings["window_y_offset"])
+        if 0 <= self.temp_settings.get("screen_index", 0) < self.screen_combo.count():
+            self.screen_combo.setCurrentIndex(self.temp_settings.get("screen_index", 0))
+        self.slider_offset_y.setValue(self.temp_settings["window_y_offset"])
+        self.slider_offset_x.setValue(self.temp_settings.get("window_x_offset", 0))
+        self.check_track_info.setChecked(
+            self.temp_settings.get("track_info_enabled", False)
+        )
+        self.slider_track_x.setValue(self.temp_settings.get("track_info_x_offset", 0))
+        self.slider_track_y.setValue(self.temp_settings.get("track_info_y_offset", 0))
+
+        self.update_position_bounds()
 
         # System
         self.spin_sync.setValue(self.temp_settings.get("sync_offset_ms", 0) / 1000.0)
@@ -495,6 +626,97 @@ class SettingsDialog(QDialog):
         self.hotkey_edit.setKeySequence(QKeySequence(hotkey))
 
         self.update_preview()
+
+    def get_selected_screen_geometry(self):
+        screens = QApplication.screens()
+        screen_index = self.temp_settings.get("screen_index", 0)
+        if 0 <= screen_index < len(screens):
+            return screens[screen_index].geometry()
+        return QApplication.primaryScreen().geometry()
+
+    def update_screen_selection(self, index):
+        self.temp_settings["screen_index"] = index
+        self.update_position_bounds()
+
+    def update_position_bounds(self):
+        if not hasattr(self, "slider_offset_y"):
+            return
+
+        screen_geom = self.get_selected_screen_geometry()
+        extra_y = OVERLAY_HEIGHT // 2
+        min_y_offset = -extra_y
+        max_y_offset = screen_geom.height() - OVERLAY_HEIGHT + extra_y
+        max_x_offset = max(0, (screen_geom.width() - OVERLAY_WIDTH) // 2)
+
+        y_value = min(
+            max(self.temp_settings.get("window_y_offset", 0), min_y_offset),
+            max_y_offset,
+        )
+        x_value = min(
+            max(self.temp_settings.get("window_x_offset", 0), -max_x_offset),
+            max_x_offset,
+        )
+
+        self.slider_offset_y.blockSignals(True)
+        self.spin_offset_y.blockSignals(True)
+        self.slider_offset_x.blockSignals(True)
+        self.spin_offset_x.blockSignals(True)
+
+        self.slider_offset_y.setRange(min_y_offset, max_y_offset)
+        self.spin_offset_y.setRange(min_y_offset, max_y_offset)
+        self.slider_offset_x.setRange(-max_x_offset, max_x_offset)
+        self.spin_offset_x.setRange(-max_x_offset, max_x_offset)
+
+        self.slider_offset_y.setValue(y_value)
+        self.spin_offset_y.setValue(y_value)
+        self.slider_offset_x.setValue(x_value)
+        self.spin_offset_x.setValue(x_value)
+
+        self.slider_offset_y.blockSignals(False)
+        self.spin_offset_y.blockSignals(False)
+        self.slider_offset_x.blockSignals(False)
+        self.spin_offset_x.blockSignals(False)
+
+        self.temp_settings["window_y_offset"] = y_value
+        self.temp_settings["window_x_offset"] = x_value
+
+        track_height = get_track_info_height(
+            self.temp_settings.get("font_size_normal", 14)
+        )
+        max_track_x = max(0, (screen_geom.width() - TRACK_INFO_WIDTH) // 2)
+        max_track_y = max(0, (screen_geom.height() - track_height) // 2)
+
+        track_x_value = min(
+            max(self.temp_settings.get("track_info_x_offset", 0), -max_track_x),
+            max_track_x,
+        )
+        track_y_value = min(
+            max(self.temp_settings.get("track_info_y_offset", 0), -max_track_y),
+            max_track_y,
+        )
+
+        self.slider_track_x.blockSignals(True)
+        self.spin_track_x.blockSignals(True)
+        self.slider_track_y.blockSignals(True)
+        self.spin_track_y.blockSignals(True)
+
+        self.slider_track_x.setRange(-max_track_x, max_track_x)
+        self.spin_track_x.setRange(-max_track_x, max_track_x)
+        self.slider_track_y.setRange(-max_track_y, max_track_y)
+        self.spin_track_y.setRange(-max_track_y, max_track_y)
+
+        self.slider_track_x.setValue(track_x_value)
+        self.spin_track_x.setValue(track_x_value)
+        self.slider_track_y.setValue(track_y_value)
+        self.spin_track_y.setValue(track_y_value)
+
+        self.slider_track_x.blockSignals(False)
+        self.spin_track_x.blockSignals(False)
+        self.slider_track_y.blockSignals(False)
+        self.spin_track_y.blockSignals(False)
+
+        self.temp_settings["track_info_x_offset"] = track_x_value
+        self.temp_settings["track_info_y_offset"] = track_y_value
 
     def accept(self):
         self.manager.settings = self.temp_settings
